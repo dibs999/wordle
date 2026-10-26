@@ -336,13 +336,6 @@ export function emptyProfileData() {
   };
 }
 
-// Position für einen Hinweis: ein Buchstabe, den man noch nicht an der richtigen Stelle hat.
-export function hintPosition(game, random = Math.random) {
-  const answer = letters(game.answer);
-  const open = answer.map((_, i) => i).filter((i) => !game.guesses.some((guess) => letters(guess)[i] === answer[i]));
-  const pool = open.length ? open : answer.map((_, i) => i);
-  return pool[Math.floor(random() * pool.length)];
-}
 
 function normalizeExtremeGame(game, variant) {
   if (!game || typeof game !== 'object' || game.variant !== variant) return null;

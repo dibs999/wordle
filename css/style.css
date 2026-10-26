@@ -1030,25 +1030,7 @@ button {
   border: 0;
 }
 
-/* ---------- Hinweis und Blitz ---------- */
-
-.hint-button {
-  display: block;
-  min-height: 36px;
-  margin: 6px auto 0;
-  padding: 0 16px;
-  border-radius: 999px;
-  background: var(--surface);
-  border: 2px solid var(--line);
-  box-shadow: 0 3px 0 var(--surface-edge);
-  font-weight: 800;
-  font-size: 14px;
-}
-
-.hint-button:disabled {
-  opacity: 0.55;
-  box-shadow: none;
-}
+/* ---------- Blitz ---------- */
 
 .variant-caption.is-message {
   color: var(--text);
@@ -1792,7 +1774,7 @@ button {
     font-size: 18px;
   }
 
-  /* Im Querformat nur Meldungen zeigen (Blitz-Stand, Hinweis), Namen und Erklärungen sparen den Platz. */
+  /* Im Querformat nur den Blitz-Stand zeigen, Namen und Erklärungen sparen den Platz. */
   .variant-caption:not(.is-message) {
     display: none;
   }

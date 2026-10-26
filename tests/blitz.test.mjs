@@ -1,29 +1,13 @@
-// Tests für Hinweis und Blitz-Statistik: npm test
+// Tests für die Blitz-Statistik: npm test
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  hintPosition,
   emptyProfileData,
   normalizeProfileData,
   mergeProfileData,
   achievements,
 } from '../js/game.js';
-
-test('Hinweis zeigt eine Stelle, die noch nicht richtig geraten ist', () => {
-  // Stelle 0 (T) und 1 (I) sind schon richtig geraten, offen sind nur 2, 3, 4.
-  const game = { answer: 'TISCH', guesses: ['TIGER'] };
-  for (let i = 0; i < 50; i++) {
-    const pos = hintPosition(game);
-    assert.ok([2, 3, 4].includes(pos), `Position ${pos} ist schon bekannt`);
-  }
-});
-
-test('Hinweis fällt auf eine beliebige Stelle zurück, wenn schon alles bekannt ist', () => {
-  const game = { answer: 'TISCH', guesses: ['TISCH'] };
-  const pos = hintPosition(game, () => 0);
-  assert.equal(pos, 0);
-});
 
 test('Blitz-Statistik: Bestwert und Anzahl der Durchgänge werden übernommen', () => {
   const remote = emptyProfileData();

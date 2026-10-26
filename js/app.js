@@ -27,7 +27,6 @@ import {
   streakRanking,
   formatDuration,
   achievements,
-  hintPosition,
 } from './game.js';
 import { burstConfetti } from './fx.js';
 import {
@@ -99,7 +98,6 @@ const els = {
   rankingDaily: $('ranking-daily'),
   rankingStreak: $('ranking-streak'),
   variantChips: $('variant-chips'),
-  hintButton: $('hint-button'),
   achievementList: $('achievement-list'),
   themeSelect: $('theme-select'),
 };
@@ -575,8 +573,7 @@ function syncModeChrome() {
     chip.setAttribute('aria-pressed', String(chip.dataset.variant === extremeVariant()));
   }
   els.variantChips.hidden = state.mode !== 'extreme';
-  els.hintButton.hidden = state.mode !== 'endless' && state.mode !== 'blitz';
-  els.variantBar.hidden = state.mode === 'daily';
+  els.variantBar.hidden = state.mode !== 'extreme' && state.mode !== 'blitz';
 }
 
 function renderAll() {
@@ -586,7 +583,7 @@ function renderAll() {
   renderCaption();
 }
 
-// Beschriftung unter den Reitern: Extrem-Erklärung, Blitz-Stand und ein Hinweis, falls genutzt.
+// Beschriftung unter den Reitern: Extrem-Erklärung oder Blitz-Stand.
 function renderCaption() {
   const game = currentGame();
   let text = '';
@@ -600,14 +597,8 @@ function renderCaption() {
   } else if (state.mode === 'blitz') {
     text = blitzStatus();
   }
-  if (game.hint && game.status === 'playing') {
-    const hint = `💡 Der ${game.hint.pos + 1}. Buchstabe ist ${game.hint.letter}.`;
-    text = [text, hint].filter(Boolean).join('  ·  ');
-  }
   els.variantCaption.textContent = text;
-  els.variantCaption.classList.toggle('is-message', state.mode === 'blitz' || Boolean(game.hint));
-  els.hintButton.disabled = game.status !== 'playing' || Boolean(game.hint);
-  els.hintButton.textContent = game.hint ? '💡 Hinweis genutzt' : '💡 Hinweis';
+  els.variantCaption.classList.toggle('is-message', state.mode === 'blitz');
 }
 
 // Erkennt Mitternacht (deutsche Zeit) und lädt dann das neue Tagesrätsel.
@@ -1136,18 +1127,7 @@ function showStats({ fromGameEnd = false } = {}) {
   openDialog(els.statsDialog);
 }
 
-// ---------- Hinweis und Blitz ----------
-
-// Hinweis: zeigt einen Buchstaben, den man noch nicht an der richtigen Stelle hat. Einmal pro Runde.
-function giveHint() {
-  const game = currentGame();
-  const hintMode = state.mode === 'endless' || state.mode === 'blitz';
-  if (!hintMode || state.busy || game.status !== 'playing' || game.hint) return;
-  const pos = hintPosition(game);
-  game.hint = { pos, letter: letters(game.answer)[pos] };
-  if (state.mode === 'endless') persist();
-  renderCaption();
-}
+// ---------- Blitz ----------
 
 function newBlitzRound() {
   return { answer: randomAnswer(SOLUTIONS, state.blitzRound?.answer), guesses: [], status: 'playing' };
@@ -1355,7 +1335,6 @@ function bindEvents() {
   });
 
   els.rankingButton.addEventListener('click', openRanking);
-  els.hintButton.addEventListener('click', giveHint);
   els.newProfileButton.addEventListener('click', () => {
     els.newProfileForm.reset();
     els.newProfileError.textContent = '';
