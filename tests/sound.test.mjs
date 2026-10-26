@@ -34,6 +34,12 @@ test('ohne Audio-Unterstützung läuft nichts und wirft keinen Fehler', () => {
     sound.playInvalid();
     sound.playWin();
     sound.playLose();
+    sound.playWin({ short: true });
+    sound.playTick(true);
+    sound.playCount(3);
+    sound.playCount(0);
+    sound.playTimeUp();
+    sound.playBadge('gold');
   });
 });
 

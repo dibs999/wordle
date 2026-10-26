@@ -100,12 +100,20 @@
         <button class="variant-chip" type="button" data-variant="mastermind" aria-pressed="false"><span aria-hidden="true">🎯</span>Mastermind</button>
       </div>
       <p id="variant-caption" class="variant-caption" aria-live="polite"></p>
+      <div id="blitz-bar" class="blitz-bar" hidden>
+        <div id="blitz-meter" class="meter blitz-meter" aria-hidden="true"><span id="blitz-meter-fill"></span></div>
+        <div class="blitz-controls">
+          <button id="blitz-start" class="button blitz-start" type="button"><span aria-hidden="true">▶</span> Start</button>
+          <button id="blitz-skip" class="button button-secondary blitz-skip" type="button" hidden>Überspringen <span aria-hidden="true">⏭</span></button>
+        </div>
+      </div>
     </div>
 
     <main class="game-main">
       <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
       <div id="sr-status" class="sr-only" aria-live="polite" aria-atomic="true"></div>
       <div id="board" class="board" role="grid" aria-label="Spielfeld"></div>
+      <div id="blitz-countdown" class="blitz-countdown" aria-live="assertive" hidden></div>
     </main>
 
     <div id="keyboard" class="keyboard" aria-label="Tastatur"></div>
@@ -163,10 +171,13 @@
         <li><strong>🙈 Blind</strong> (6 Versuche): Es gibt nur Grün und Grau, kein Gelb. Die Tastatur bleibt ungefärbt.</li>
         <li><strong>🎯 Mastermind</strong> (8 Versuche): Keine Farben, nur zwei Zahlen: wie viele Buchstaben an der richtigen und wie viele an einer anderen Stelle sind.</li>
       </ul>
+      <p><strong>Blitz:</strong> 60 Sekunden, so viele Wörter wie möglich. Mit „Start“ geht es los. Ein Wort, bei dem du festhängst, kannst du überspringen.</p>
+      <h3>Abzeichen und Rangliste</h3>
+      <p>Für Erfolge gibt es Abzeichen in Bronze, Silber und Gold. Sie stehen unter „Statistik“ → „Abzeichen“, mit Fortschritt bis zum nächsten. In der Rangliste vergleicht ihr euch: heute, Serien, Blitz und Abzeichen.</p>
     </div>
   </dialog>
 
-  <!-- Statistik -->
+  <!-- Statistik und Abzeichen -->
   <dialog id="stats-dialog" class="dialog" aria-labelledby="stats-title">
     <div class="toasts dialog-toasts" role="status" aria-live="polite"></div>
     <div class="dialog-body">
@@ -177,6 +188,12 @@
         <h2 id="result-title" class="result-title"></h2>
         <p id="result-word" class="result-word"></p>
         <a id="duden-link" class="duden-link" href="#" target="_blank" rel="noopener">Im Duden nachschlagen ↗</a>
+        <div id="blitz-result" class="blitz-result" hidden>
+          <p class="blitz-score"><strong id="blitz-score">0</strong> <span id="blitz-score-label">Wörter gelöst</span></p>
+          <p id="blitz-best-note" class="blitz-best-note" hidden>Neue Bestleistung!</p>
+          <p id="blitz-rank" class="blitz-rank"></p>
+          <ul id="blitz-words" class="blitz-words" aria-label="Wörter dieses Durchgangs"></ul>
+        </div>
         <div class="result-actions">
           <button id="share-button" class="button" type="button">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v11M7.5 8 12 3.5 16.5 8"/><path d="M5 13v5.5A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V13"/></svg>
@@ -188,25 +205,45 @@
           </button>
         </div>
       </div>
-      <div class="stats-head">
-        <h2 id="stats-title">Statistik</h2>
-        <span id="stats-mode" class="stats-mode"></span>
+
+      <div class="dialog-tabs" role="tablist" aria-label="Ansicht">
+        <button id="tab-stats" class="dialog-tab" type="button" role="tab" aria-selected="true" aria-controls="panel-stats">Statistik</button>
+        <button id="tab-badges" class="dialog-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-badges">Abzeichen <span id="badge-count" class="tab-count"></span></button>
       </div>
-      <div id="blitz-stats" class="stats-numbers blitz-stats" hidden>
-        <div><strong id="blitz-best">0</strong><span>Bestes Ergebnis</span></div>
-        <div><strong id="blitz-runs">0</strong><span>Durchgänge</span></div>
+
+      <div id="panel-stats" role="tabpanel" aria-labelledby="tab-stats">
+        <div class="stats-head">
+          <h2 id="stats-title">Statistik</h2>
+          <span id="stats-mode" class="stats-mode"></span>
+        </div>
+        <div id="blitz-stats" class="stats-numbers blitz-stats" hidden>
+          <div><strong id="blitz-best">0</strong><span>Bestes Ergebnis</span></div>
+          <div><strong id="blitz-runs">0</strong><span>Durchgänge</span></div>
+          <div><strong id="blitz-average">0</strong><span>Ø Wörter</span></div>
+        </div>
+        <div id="stats-numbers" class="stats-numbers">
+          <div><strong id="stat-played">0</strong><span>Gespielt</span></div>
+          <div><strong id="stat-winrate">0</strong><span>% Gewonnen</span></div>
+          <div><strong id="stat-streak">0</strong><span>Aktuelle Serie</span></div>
+          <div><strong id="stat-max">0</strong><span>Beste Serie</span></div>
+        </div>
+        <h3 id="distribution-title">Verteilung der Versuche</h3>
+        <ol id="distribution" class="distribution"></ol>
+        <p id="countdown" class="countdown" hidden></p>
       </div>
-      <div id="stats-numbers" class="stats-numbers">
-        <div><strong id="stat-played">0</strong><span>Gespielt</span></div>
-        <div><strong id="stat-winrate">0</strong><span>% Gewonnen</span></div>
-        <div><strong id="stat-streak">0</strong><span>Aktuelle Serie</span></div>
-        <div><strong id="stat-max">0</strong><span>Beste Serie</span></div>
+
+      <div id="panel-badges" role="tabpanel" aria-labelledby="tab-badges" hidden>
+        <div class="badge-summary">
+          <p><strong id="badge-summary-count">0</strong> von <span id="badge-summary-total">0</span> Abzeichen</p>
+          <div class="meter" aria-hidden="true"><span id="badge-summary-bar"></span></div>
+          <p class="badge-tiers"><span class="tier-dot tier-gold"></span><span id="badge-gold">0</span> Gold · <span class="tier-dot tier-silver"></span><span id="badge-silver">0</span> Silber · <span class="tier-dot tier-bronze"></span><span id="badge-bronze">0</span> Bronze</p>
+        </div>
+        <div id="badge-groups" class="badge-groups"></div>
       </div>
-      <h3 id="distribution-title">Verteilung der Versuche</h3>
-      <ol id="distribution" class="distribution"></ol>
-      <h3 id="achievement-title">Abzeichen</h3>
-      <ul id="achievement-list" class="achievement-list" aria-labelledby="achievement-title"></ul>
-      <p id="countdown" class="countdown" hidden></p>
+
+      <button id="stats-ranking" class="button button-secondary stats-ranking" type="button">
+        <span aria-hidden="true">🏆</span> Rangliste
+      </button>
     </div>
   </dialog>
 
@@ -217,12 +254,27 @@
       <div class="grabber" aria-hidden="true"></div>
       <button class="dialog-close" type="button" data-close aria-label="Schließen"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       <h2 id="ranking-title">Rangliste</h2>
-      <h3>Tagesrätsel heute</h3>
-      <ol id="ranking-daily" class="ranking-list"></ol>
-      <h3>Tagesserien</h3>
-      <ol id="ranking-streak" class="ranking-list"></ol>
+      <div class="dialog-tabs ranking-tabs" role="tablist" aria-label="Kategorie">
+        <button class="dialog-tab" type="button" role="tab" data-board="daily" aria-selected="true" aria-controls="ranking-list">Heute</button>
+        <button class="dialog-tab" type="button" role="tab" data-board="streak" aria-selected="false" aria-controls="ranking-list">Serien</button>
+        <button class="dialog-tab" type="button" role="tab" data-board="blitz" aria-selected="false" aria-controls="ranking-list">Blitz</button>
+        <button class="dialog-tab" type="button" role="tab" data-board="badges" aria-selected="false" aria-controls="ranking-list">Abzeichen</button>
+      </div>
+      <p id="ranking-caption" class="ranking-caption"></p>
+      <ol id="ranking-list" class="ranking-list" role="tabpanel"></ol>
     </div>
   </dialog>
+
+  <!-- Neues Abzeichen -->
+  <div id="badge-popup" class="badge-popup" role="status" aria-live="polite" hidden>
+    <div class="badge-popup-card">
+      <span class="badge-popup-label">Neues Abzeichen!</span>
+      <span id="badge-popup-icon" class="badge-popup-icon" aria-hidden="true"></span>
+      <strong id="badge-popup-title" class="badge-popup-title"></strong>
+      <span id="badge-popup-text" class="badge-popup-text"></span>
+      <span id="badge-popup-tier" class="badge-popup-tier"></span>
+    </div>
+  </div>
 
   <!-- Einstellungen -->
   <dialog id="settings-dialog" class="dialog" aria-labelledby="settings-title">

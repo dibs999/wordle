@@ -330,8 +330,12 @@ export function emptyProfileData() {
     extreme: {},
     stats: { daily: emptyStats(), endless: emptyStats() },
     extremeStats: emptyExtremeStats(),
-    // Blitz: meiste gelöste Wörter in einem Durchgang und Anzahl der Durchgänge.
-    blitzStats: { best: 0, runs: 0 },
+    // Blitz: meiste gelöste Wörter in einem Durchgang, Anzahl der Durchgänge und gelöste Wörter insgesamt.
+    blitzStats: { best: 0, runs: 0, words: 0 },
+    // Erreichte Abzeichen mit Datum der Freischaltung: { [id]: ISO-Zeit }.
+    achievements: {},
+    // Bestwerte, die sich nicht aus der Statistik ablesen lassen.
+    records: { fastestWinMs: null },
     settings: { extremeVariant: 'devil' },
   };
 }
@@ -395,6 +399,15 @@ export function normalizeProfileData(data) {
     blitzStats: {
       best: Number(data.blitzStats?.best) || 0,
       runs: Number(data.blitzStats?.runs) || 0,
+      words: Number(data.blitzStats?.words) || 0,
+    },
+    achievements: Object.fromEntries(
+      Object.entries(data.achievements && typeof data.achievements === 'object' ? data.achievements : {}).filter(
+        ([id, at]) => typeof id === 'string' && typeof at === 'string',
+      ),
+    ),
+    records: {
+      fastestWinMs: Number(data.records?.fastestWinMs) > 0 ? Number(data.records.fastestWinMs) : null,
     },
     // Übernimmt auch die kurzzeitig unter stats.extreme gespeicherte Statistik (die mit mehr Runden gilt).
     extremeStats: Object.fromEntries(
@@ -452,6 +465,20 @@ function pickStats(remote, local) {
   return local.played >= remote.played ? local : remote;
 }
 
+function minOrNull(a, b) {
+  if (a == null) return b;
+  if (b == null) return a;
+  return Math.min(a, b);
+}
+
+function mergeAchievementDates(remote, local) {
+  const merged = { ...remote };
+  for (const [id, at] of Object.entries(local)) {
+    if (!merged[id] || at < merged[id]) merged[id] = at;
+  }
+  return merged;
+}
+
 // Führt zwei Stände desselben Profils zusammen, wenn zwei Geräte gleichzeitig gespeichert haben.
 // Spiele: Der weiter fortgeschrittene Stand gewinnt. Statistik: Der Stand mit mehr gespielten Runden gilt.
 // Runden werden nicht addiert, so zählt nie eine Runde doppelt (dafür kann eine gleichzeitig gespielte fehlen).
@@ -477,6 +504,12 @@ export function mergeProfileData(remoteData, localData) {
     blitzStats: {
       best: Math.max(remote.blitzStats.best, local.blitzStats.best),
       runs: Math.max(remote.blitzStats.runs, local.blitzStats.runs),
+      words: Math.max(remote.blitzStats.words, local.blitzStats.words),
+    },
+    // Ein Abzeichen, das ein Gerät erreicht hat, bleibt erreicht (mit dem frühesten Datum).
+    achievements: mergeAchievementDates(remote.achievements, local.achievements),
+    records: {
+      fastestWinMs: minOrNull(remote.records.fastestWinMs, local.records.fastestWinMs),
     },
     settings: local.settings,
   };
@@ -494,15 +527,17 @@ export function formatDuration(ms) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-// Rangliste für ein Tagesrätsel: gewonnen (wenigste Versuche, dann schnellste zuerst),
+// ---------- Ranglisten ----------
+
+// Tagesrätsel: gewonnen (wenigste Versuche, dann schnellste zuerst),
 // danach verloren, laufend und zuletzt die, die heute noch nicht angefangen haben.
 export function dailyRanking(profiles, day) {
-  const rows = profiles.map(({ name, data }) => {
+  const rows = profiles.map(({ id, name, data }) => {
     const game = data.daily;
-    if (!game || game.day !== day) return { name, tier: 3, guesses: 0, ms: null };
-    if (game.status === 'won') return { name, tier: 0, guesses: game.guesses.length, ms: durationMs(game) };
-    if (game.status === 'lost') return { name, tier: 1, guesses: game.guesses.length, ms: null };
-    return { name, tier: game.guesses.length ? 2 : 3, guesses: game.guesses.length, ms: null };
+    if (!game || game.day !== day) return { id, name, tier: 3, guesses: 0, ms: null };
+    if (game.status === 'won') return { id, name, tier: 0, guesses: game.guesses.length, ms: durationMs(game) };
+    if (game.status === 'lost') return { id, name, tier: 1, guesses: game.guesses.length, ms: null };
+    return { id, name, tier: game.guesses.length ? 2 : 3, guesses: game.guesses.length, ms: null };
   });
   return rows.sort(
     (a, b) =>
@@ -513,110 +548,130 @@ export function dailyRanking(profiles, day) {
   );
 }
 
+// Aktuelle Tagesserie (bei Gleichstand entscheidet die beste Serie).
+export function streakRanking(profiles, today) {
+  return profiles
+    .map(({ id, name, data }) => ({
+      id,
+      name,
+      streak: currentDailyStreak(data.stats.daily, today),
+      best: data.stats.daily.maxStreak,
+    }))
+    .sort((a, b) => b.streak - a.streak || b.best - a.best || a.name.localeCompare(b.name, 'de'));
+}
+
+// Bestes Blitz-Ergebnis.
+export function blitzRanking(profiles) {
+  return profiles
+    .map(({ id, name, data }) => ({ id, name, best: data.blitzStats.best, runs: data.blitzStats.runs }))
+    .sort((a, b) => b.best - a.best || a.runs - b.runs || a.name.localeCompare(b.name, 'de'));
+}
+
+// Anzahl erreichter Abzeichen (bei Gleichstand zählen goldene, dann silberne mehr).
+export function achievementRanking(profiles) {
+  return profiles
+    .map(({ id, name, data }) => {
+      const earned = achievements(data).filter((a) => a.earned);
+      const tierCount = (tier) => earned.filter((a) => a.tier === tier).length;
+      return { id, name, count: earned.length, gold: tierCount('gold'), silver: tierCount('silver') };
+    })
+    .sort((a, b) => b.count - a.count || b.gold - a.gold || b.silver - a.silver || a.name.localeCompare(b.name, 'de'));
+}
+
+// Platz in einer sortierten Rangliste (1-basiert); Gleichstand teilt sich den Platz.
+export function rankOf(rows, id, value) {
+  const index = rows.findIndex((row) => row.id === id);
+  if (index < 0) return null;
+  const mine = value(rows[index]);
+  return rows.findIndex((row) => value(row) === mine) + 1;
+}
+
 // ---------- Abzeichen ----------
 
-// Die Abzeichen werden aus den Statistiken berechnet, nichts davon muss gespeichert werden.
+// Gruppen in der Reihenfolge, in der sie angezeigt werden.
+export const ACHIEVEMENT_GROUPS = [
+  { id: 'wins', title: 'Siege' },
+  { id: 'daily', title: 'Tagesrätsel' },
+  { id: 'skill', title: 'Können' },
+  { id: 'endless', title: 'Endlos' },
+  { id: 'extreme', title: 'Extrem' },
+  { id: 'blitz', title: 'Blitz' },
+];
+
 function totalWins(data) {
   return data.stats.daily.won + data.stats.endless.won + EXTREME_KEYS.reduce((sum, key) => sum + data.extremeStats[key].won, 0);
 }
 
-export const ACHIEVEMENTS = [
-  {
-    id: 'first-win',
-    icon: '🎉',
-    title: 'Erster Sieg',
-    text: 'Ein Wort gelöst.',
-    earned: (d) => totalWins(d) >= 1,
-  },
-  {
-    id: 'one-guess',
-    icon: '🎯',
-    title: 'Volltreffer',
-    text: 'Ein Wort mit dem ersten Versuch erraten.',
-    earned: (d) => d.stats.daily.dist[0] + d.stats.endless.dist[0] >= 1,
-  },
-  {
-    id: 'daily-10',
-    icon: '📅',
-    title: 'Stammgast',
-    text: '10 Tagesrätsel gelöst.',
-    earned: (d) => d.stats.daily.won >= 10,
-  },
-  {
-    id: 'streak-7',
-    icon: '🔥',
-    title: 'Woche am Stück',
-    text: '7 Tagesrätsel hintereinander gelöst.',
-    earned: (d) => d.stats.daily.maxStreak >= 7,
-  },
-  {
-    id: 'streak-30',
-    icon: '🌟',
-    title: 'Ein ganzer Monat',
-    text: '30 Tagesrätsel hintereinander gelöst.',
-    earned: (d) => d.stats.daily.maxStreak >= 30,
-  },
-  {
-    id: 'endless-25',
-    icon: '♾️',
-    title: 'Vielspieler',
-    text: '25 Wörter im Endlos-Modus gelöst.',
-    earned: (d) => d.stats.endless.won >= 25,
-  },
-  {
-    id: 'devil',
-    icon: '😈',
-    title: 'Teufel bezwungen',
-    text: 'Den Teufel im Extrem-Modus besiegt.',
-    earned: (d) => d.extremeStats.devil.won >= 1,
-  },
-  {
-    id: 'liar',
-    icon: '🤥',
-    title: 'Lügner durchschaut',
-    text: 'Den Lügner im Extrem-Modus besiegt.',
-    earned: (d) => d.extremeStats.liar.won >= 1,
-  },
-  {
-    id: 'blind',
-    icon: '🙈',
-    title: 'Blind getroffen',
-    text: 'Den Blind-Modus gewonnen.',
-    earned: (d) => d.extremeStats.blind.won >= 1,
-  },
-  {
-    id: 'mastermind',
-    icon: '🧠',
-    title: 'Meister der Zahlen',
-    text: 'Den Mastermind-Modus gewonnen.',
-    earned: (d) => d.extremeStats.mastermind.won >= 1,
-  },
-  {
-    id: 'all-extreme',
-    icon: '🏆',
-    title: 'Alle Extreme',
-    text: 'Jede Extrem-Variante mindestens einmal gewonnen.',
-    earned: (d) => EXTREME_KEYS.every((key) => d.extremeStats[key].won >= 1),
-  },
-  {
-    id: 'blitz-10',
-    icon: '⏱️',
-    title: 'Blitzschnell',
-    text: '10 Wörter in einem Blitz-Durchgang gelöst.',
-    earned: (d) => d.blitzStats.best >= 10,
-  },
-];
-
-// Alle Abzeichen eines Profils mit dem Stand, ob sie erreicht sind.
-export function achievements(data) {
-  return ACHIEVEMENTS.map(({ id, icon, title, text, earned }) => ({ id, icon, title, text, earned: Boolean(earned(data)) }));
+// Wie oft ein Wort mit genau n Versuchen gelöst wurde (Tagesrätsel und Endlos).
+function solvedWith(data, guesses) {
+  return data.stats.daily.dist[guesses - 1] + data.stats.endless.dist[guesses - 1];
 }
 
-// Rangliste der aktuellen Tagesserien, längste zuerst.
-export function streakRanking(profiles, today) {
-  return profiles
-    .map(({ name, data }) => ({ name, streak: currentDailyStreak(data.stats.daily, today) }))
-    .sort((a, b) => b.streak - a.streak || a.name.localeCompare(b.name, 'de'));
+const dailyWins = (d) => d.stats.daily.won;
+const bestStreak = (d) => d.stats.daily.maxStreak;
+const endlessWins = (d) => d.stats.endless.won;
+const blitzBest = (d) => d.blitzStats.best;
+const extremeWins = (key) => (d) => d.extremeStats[key].won;
+
+// tier: bronze, silver oder gold. value(d) ist der Fortschritt, target das Ziel.
+export const ACHIEVEMENTS = [
+  { id: 'win-1', group: 'wins', tier: 'bronze', icon: '🎉', title: 'Erster Sieg', text: 'Ein Wort gelöst.', target: 1, value: totalWins },
+  { id: 'win-25', group: 'wins', tier: 'bronze', icon: '📚', title: 'Wortkenner', text: '25 Wörter gelöst.', target: 25, value: totalWins },
+  { id: 'win-100', group: 'wins', tier: 'silver', icon: '🎓', title: 'Wortprofi', text: '100 Wörter gelöst.', target: 100, value: totalWins },
+  { id: 'win-500', group: 'wins', tier: 'gold', icon: '👑', title: 'Wortmeister', text: '500 Wörter gelöst.', target: 500, value: totalWins },
+
+  { id: 'daily-10', group: 'daily', tier: 'bronze', icon: '📅', title: 'Stammgast', text: '10 Tagesrätsel gelöst.', target: 10, value: dailyWins },
+  { id: 'daily-50', group: 'daily', tier: 'silver', icon: '🗓️', title: 'Tagesrätsel-Fan', text: '50 Tagesrätsel gelöst.', target: 50, value: dailyWins },
+  { id: 'daily-200', group: 'daily', tier: 'gold', icon: '🏛️', title: 'Institution', text: '200 Tagesrätsel gelöst.', target: 200, value: dailyWins },
+  { id: 'streak-3', group: 'daily', tier: 'bronze', icon: '🔥', title: 'Drei am Stück', text: '3 Tagesrätsel hintereinander gelöst.', target: 3, value: bestStreak },
+  { id: 'streak-7', group: 'daily', tier: 'silver', icon: '💪', title: 'Woche am Stück', text: '7 Tagesrätsel hintereinander gelöst.', target: 7, value: bestStreak },
+  { id: 'streak-30', group: 'daily', tier: 'gold', icon: '🌟', title: 'Ein ganzer Monat', text: '30 Tagesrätsel hintereinander gelöst.', target: 30, value: bestStreak },
+
+  { id: 'last-guess', group: 'skill', tier: 'bronze', icon: '😅', title: 'Knapp gerettet', text: 'Ein Wort mit dem letzten Versuch gelöst.', target: 1, value: (d) => solvedWith(d, MAX_GUESSES) },
+  { id: 'two-guess', group: 'skill', tier: 'silver', icon: '🧩', title: 'Scharfsinn', text: '5 Wörter mit nur zwei Versuchen gelöst.', target: 5, value: (d) => solvedWith(d, 2) },
+  { id: 'fast', group: 'skill', tier: 'silver', icon: '🚀', title: 'Schnelldenker', text: 'Ein Wort in unter einer Minute gelöst.', target: 1, value: (d) => (d.records.fastestWinMs != null && d.records.fastestWinMs <= 60_000 ? 1 : 0) },
+  { id: 'one-guess', group: 'skill', tier: 'gold', icon: '🎯', title: 'Volltreffer', text: 'Ein Wort mit dem ersten Versuch erraten.', target: 1, value: (d) => solvedWith(d, 1) },
+
+  { id: 'endless-25', group: 'endless', tier: 'bronze', icon: '♾️', title: 'Vielspieler', text: '25 Wörter im Endlos-Modus gelöst.', target: 25, value: endlessWins },
+  { id: 'endless-100', group: 'endless', tier: 'silver', icon: '🏃', title: 'Marathon', text: '100 Wörter im Endlos-Modus gelöst.', target: 100, value: endlessWins },
+
+  { id: 'devil', group: 'extreme', tier: 'bronze', icon: '😈', title: 'Teufel bezwungen', text: 'Den Teufel einmal besiegt.', target: 1, value: extremeWins('devil') },
+  { id: 'liar', group: 'extreme', tier: 'bronze', icon: '🤥', title: 'Lügner durchschaut', text: 'Den Lügner einmal besiegt.', target: 1, value: extremeWins('liar') },
+  { id: 'blind', group: 'extreme', tier: 'bronze', icon: '🙈', title: 'Blind getroffen', text: 'Den Blind-Modus einmal gewonnen.', target: 1, value: extremeWins('blind') },
+  { id: 'mastermind', group: 'extreme', tier: 'bronze', icon: '🧠', title: 'Meister der Zahlen', text: 'Den Mastermind-Modus einmal gewonnen.', target: 1, value: extremeWins('mastermind') },
+  { id: 'all-extreme', group: 'extreme', tier: 'silver', icon: '🏆', title: 'Alle Extreme', text: 'Jede Extrem-Variante mindestens einmal gewonnen.', target: EXTREME_KEYS.length, value: (d) => EXTREME_KEYS.filter((key) => d.extremeStats[key].won >= 1).length },
+  { id: 'devil-10', group: 'extreme', tier: 'gold', icon: '👹', title: 'Teufelsaustreiber', text: 'Den Teufel 10-mal besiegt.', target: 10, value: extremeWins('devil') },
+
+  { id: 'blitz-3', group: 'blitz', tier: 'bronze', icon: '⏱️', title: 'Flink', text: '3 Wörter in einem Blitz-Durchgang.', target: 3, value: blitzBest },
+  { id: 'blitz-6', group: 'blitz', tier: 'silver', icon: '⚡', title: 'Blitzschnell', text: '6 Wörter in einem Blitz-Durchgang.', target: 6, value: blitzBest },
+  { id: 'blitz-10', group: 'blitz', tier: 'gold', icon: '🌩️', title: 'Licht\u00ADgeschwindigkeit', text: '10 Wörter in einem Blitz-Durchgang.', target: 10, value: blitzBest },
+];
+
+// Stand aller Abzeichen eines Profils: Fortschritt, ob erreicht und seit wann.
+// Ein gespeichertes Abzeichen bleibt erreicht, auch wenn die Statistik sich später ändert.
+export function achievements(data) {
+  return ACHIEVEMENTS.map(({ value, ...a }) => {
+    const progress = Math.min(value(data), a.target);
+    const earnedAt = data.achievements[a.id] || null;
+    return { ...a, progress, earned: Boolean(earnedAt) || progress >= a.target, earnedAt };
+  });
+}
+
+// Trägt neu erreichte Abzeichen mit Datum ein und gibt sie zurück (für die Meldung „Neues Abzeichen“).
+export function unlockAchievements(data, now = new Date().toISOString()) {
+  const unlocked = [];
+  for (const { value, ...a } of ACHIEVEMENTS) {
+    if (data.achievements[a.id] || value(data) < a.target) continue;
+    data.achievements[a.id] = now;
+    unlocked.push(a);
+  }
+  return unlocked;
+}
+
+// Merkt sich die schnellste Lösung eines Wortes (für „Schnelldenker“).
+export function recordWinTime(data, ms) {
+  if (!(ms > 0)) return;
+  data.records.fastestWinMs = minOrNull(data.records.fastestWinMs, ms);
 }
 
 export const SHARE_EMOJI = { correct: '🟩', present: '🟨', absent: '⬛' };

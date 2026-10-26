@@ -15,12 +15,12 @@ test('Blitz-Statistik: Bestwert und Anzahl der Durchgänge werden übernommen', 
   const local = emptyProfileData();
   local.blitzStats = { best: 4, runs: 5 };
   const merged = mergeProfileData(remote, local);
-  assert.deepEqual(merged.blitzStats, { best: 7, runs: 5 });
+  assert.deepEqual(merged.blitzStats, { best: 7, runs: 5, words: 0 });
 });
 
 test('Blitz-Statistik fehlt in älteren Profilen: wird mit 0 ergänzt', () => {
   const data = normalizeProfileData({ stats: { daily: { played: 1 } } });
-  assert.deepEqual(data.blitzStats, { best: 0, runs: 0 });
+  assert.deepEqual(data.blitzStats, { best: 0, runs: 0, words: 0 });
   const broken = normalizeProfileData({ blitzStats: { best: 'viele' } });
   assert.equal(broken.blitzStats.best, 0);
 });

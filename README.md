@@ -7,6 +7,10 @@ Errate das deutsche Wort mit fünf Buchstaben in sechs Versuchen.
 - **Endlos-Modus:** beliebig viele zufällige Wörter mit eigener Statistik.
 - **Statistik pro Profil:** Spiele, Siegquote, Serie, Verteilung der Versuche – mit Supabase auf allen Geräten gleich.
 - **Extrem-Modus:** vier richtig schwere Varianten – 😈 Teufel, 🤥 Lügner, 🙈 Blind, 🎯 Mastermind.
+- **Blitz:** 60 Sekunden, so viele Wörter wie möglich – mit Countdown, Zeitbalken und Wortliste am Ende.
+- **Abzeichen:** 25 Abzeichen in Bronze, Silber und Gold mit Fortschritt; erreichte werden mit Datum im Profil gespeichert.
+- **Rangliste:** Tagesrätsel, Serien, Blitz und Abzeichen im Vergleich aller Profile.
+- Töne und Konfetti werden im Browser erzeugt (keine Audio- oder Bilddateien); die Töne lassen sich in den Einstellungen abschalten.
 - QWERTZ-Tastatur mit Ä, Ö, Ü (ß wird als SS geschrieben), hoher Kontrast, helles/dunkles Design, Ergebnis teilen.
 
 Reine statische Webseite (HTML, CSS, JavaScript) – läuft kostenlos auf GitHub Pages.

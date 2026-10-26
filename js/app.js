@@ -25,8 +25,15 @@ import {
   reuseUnchangedGames,
   dailyRanking,
   streakRanking,
+  blitzRanking,
+  achievementRanking,
+  rankOf,
+  durationMs,
   formatDuration,
+  ACHIEVEMENT_GROUPS,
   achievements,
+  unlockAchievements,
+  recordWinTime,
 } from './game.js';
 import { burstConfetti } from './fx.js';
 import {
@@ -46,7 +53,19 @@ import {
   listLocalOnlyProfiles,
   importLocalProfile,
 } from './store.js';
-import { playTap, playFlip, playInvalid, playWin, playLose, isSoundEnabled, setSoundEnabled } from './sound.js';
+import {
+  playTap,
+  playFlip,
+  playInvalid,
+  playWin,
+  playLose,
+  playTick,
+  playCount,
+  playTimeUp,
+  playBadge,
+  isSoundEnabled,
+  setSoundEnabled,
+} from './sound.js';
 
 const ALLOWED_SET = new Set([...ALLOWED, ...SOLUTIONS]);
 const LAST_PROFILE_KEY = 'wordle-de:last-profile';
@@ -65,6 +84,15 @@ const KEY_ROWS = [
 const STATE_LABEL = { correct: 'richtig', present: 'an anderer Stelle', absent: 'nicht im Wort' };
 const BLITZ_SECONDS = 60;
 const BLITZ_PAUSE = 1300;
+const BLITZ_URGENT_MS = 10_000; // in den letzten Sekunden tickt die Uhr und der Balken wird rot
+const BADGE_POPUP_MS = 3600;
+const TIER_LABEL = { bronze: 'Bronze', silver: 'Silber', gold: 'Gold' };
+const TIER_CONFETTI = {
+  bronze: ['#c27a3b', '#e0a46b', '#8a4f22', '#f3c99d'],
+  silver: ['#9aa4ae', '#d7dde2', '#ffffff', '#6f7c88'],
+  gold: ['#e3a90c', '#ffd23f', '#fff3b0', '#c98a00'],
+};
+const MEDALS = ['🥇', '🥈', '🥉'];
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -95,17 +123,19 @@ const els = {
   soundToggle: $('sound-toggle'),
   rankingButton: $('ranking-button'),
   rankingDialog: $('ranking-dialog'),
-  rankingDaily: $('ranking-daily'),
-  rankingStreak: $('ranking-streak'),
+  rankingList: $('ranking-list'),
   variantChips: $('variant-chips'),
-  achievementList: $('achievement-list'),
+  badgePopup: $('badge-popup'),
+  blitzStart: $('blitz-start'),
+  blitzSkip: $('blitz-skip'),
+  blitzCountdown: $('blitz-countdown'),
   themeSelect: $('theme-select'),
 };
 
 const state = {
   profiles: [],
   profile: null,
-  mode: 'daily', // 'daily' | 'endless' | 'extreme'
+  mode: 'daily', // 'daily' | 'endless' | 'extreme' | 'blitz'
   today: berlinDayKey(),
   current: [],
   busy: false, // Wort wird gerade aufgedeckt
@@ -119,7 +149,12 @@ const state = {
   boardShape: '',
   boardIdentity: '',
   blitzRound: null, // Wort des laufenden Blitz-Durchgangs (wird nicht gespeichert)
-  blitz: null, // laufender Durchgang: Ende, Punkte und Zeitgeber
+  blitz: null, // laufender Durchgang: Phase (countdown/running), Ende, Punkte, Wörter und Zeitgeber
+  blitzHintAt: 0,
+  statsTab: 'stats', // 'stats' | 'badges'
+  rankingBoard: 'daily', // 'daily' | 'streak' | 'blitz' | 'badges'
+  unseenBadges: new Set(), // in dieser Sitzung erreicht und noch nicht angesehen
+  badgePopup: null, // Warteschlange der Meldungen „Neues Abzeichen“
 };
 
 // ---------- Hilfsfunktionen ----------
@@ -169,6 +204,15 @@ function announce(message) {
     els.srStatus.textContent = message;
   });
 }
+
+function el(tag, className = '', text = null) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function nameHash(name) {
   let hash = 0;
@@ -352,6 +396,7 @@ function replaceListedProfile(profile) {
 function showProfileScreen() {
   // Ein laufender Blitz-Durchgang wird zuerst beendet, solange das Profil noch ausgewählt ist.
   finishBlitz();
+  dismissBadgePopups();
   closeAllDialogs();
   stopCountdown();
   clearTimeout(state.statsTimer);
@@ -411,6 +456,9 @@ async function selectProfile(id) {
   writeSetting(LAST_PROFILE_KEY, id);
   state.today = berlinDayKey();
   ensureGames();
+  state.unseenBadges.clear();
+  // Abzeichen, die schon vor dieser Version verdient waren, still mit dem heutigen Datum nachtragen.
+  if (unlockAchievements(profile.data).length > 0) persist();
 
   const dailyDone = profile.data.daily.status !== 'playing';
   els.profileScreen.hidden = true;
@@ -551,8 +599,8 @@ function setMode(mode) {
   state.current = [];
   clearTimeout(state.statsTimer);
   state.statsTimer = null;
-  // Blitz beginnt jedes Mal mit einem frischen Wort.
-  if (mode === 'blitz') state.blitzRound = newBlitzRound();
+  // Blitz wartet auf „Start“ und beginnt dann mit einem frischen Wort.
+  if (mode === 'blitz') state.blitzRound = newBlitzRound('idle');
   ensureGames();
   if (mode !== 'daily' && currentGame().status !== 'playing') {
     startNextRound();
@@ -599,6 +647,9 @@ function renderCaption() {
   }
   els.variantCaption.textContent = text;
   els.variantCaption.classList.toggle('is-message', state.mode === 'blitz');
+  // Vor dem Start erklärt die Zeile nur den Modus; im Querformat fällt sie dann weg.
+  els.variantCaption.classList.toggle('is-idle', state.mode === 'blitz' && state.blitz?.phase !== 'running');
+  renderBlitzBar();
 }
 
 // Erkennt Mitternacht (deutsche Zeit) und lädt dann das neue Tagesrätsel.
@@ -767,7 +818,7 @@ function revealRow(rowIndex, guess, feedback, isCurrent) {
       setTimeout(() => {
         if (!isCurrent()) return;
         setTile(tile, chars[i], states[i], i + 1);
-        playFlip(states[i]);
+        playFlip(states[i], i);
       }, FLIP_HALF);
       tile.addEventListener('animationend', () => tile.classList.remove('flip'), { once: true });
     }, i * FLIP_STEP);
@@ -847,15 +898,21 @@ function inputBlocked() {
 }
 
 function addLetter(letter) {
+  if (state.mode === 'blitz' && !state.blitz && state.profile && !state.busy) {
+    hintBlitzStart();
+    return;
+  }
   if (inputBlocked() || state.current.length >= WORD_LENGTH) return;
+  const game = currentGame();
+  // Die Zeit für Rangliste und „Schnelldenker“ läuft ab dem ersten getippten Buchstaben.
+  if (!game.startedAt && game.guesses.length === 0) game.startedAt = Date.now();
   state.current.push(letter);
   renderCurrentRow();
-  const tile = rowTiles(currentGame().guesses.length)[state.current.length - 1];
+  const tile = rowTiles(game.guesses.length)[state.current.length - 1];
   tile.classList.remove('pop');
   void tile.offsetWidth;
   tile.classList.add('pop');
   playTap();
-  if (state.mode === 'blitz' && !state.blitz) startBlitzRun();
 }
 
 function removeLetter() {
@@ -881,6 +938,11 @@ function describeFeedback(guess, feedback) {
 async function submitGuess() {
   if (state.busy || state.switching || !state.profile) return;
   const game = currentGame();
+  // Im Blitz startet Enter den Durchgang (nur vor dem ersten, danach über „Nochmal“).
+  if (state.mode === 'blitz' && !state.blitz) {
+    if (game.status === 'idle') startBlitzCountdown();
+    return;
+  }
   if (game.status !== 'playing') {
     // Im Endlos- und Extrem-Modus startet Enter nach einer Runde das nächste Wort
     // (erst wenn das Ergebnis angezeigt wurde).
@@ -916,11 +978,12 @@ async function submitGuess() {
     else if (game.guesses.length === MAX_GUESSES) game.status = 'lost';
   }
   state.current = [];
-  // Zeiten für die Rangliste: vom ersten Versuch bis zum Ende der Runde.
-  if (firstGuess) game.startedAt = Date.now();
+  // Zeiten für die Rangliste: vom ersten Buchstaben bis zum Ende der Runde.
+  if (firstGuess && !game.startedAt) game.startedAt = Date.now();
   if (game.status !== 'playing') game.finishedAt = Date.now();
 
   // Blitz-Wörter gehen nicht in die normale Statistik ein, sondern in den Bestwert des Durchgangs.
+  let unlocked = [];
   if (game.status !== 'playing' && state.mode !== 'blitz') {
     const stats = state.profile.data.stats;
     if (state.mode === 'daily') {
@@ -932,6 +995,8 @@ async function submitGuess() {
       const variant = extremeVariant();
       extremeStats[variant] = recordEndlessResult(extremeStats[variant], won, game.guesses.length);
     }
+    if (won) recordWinTime(state.profile.data, durationMs(game));
+    unlocked = collectAchievements();
   }
 
   const profile = state.profile;
@@ -953,7 +1018,7 @@ async function submitGuess() {
   renderCaption();
   announce(`Versuch ${rowIndex + 1}: ${describeFeedback(guess, feedback)}`);
   if (mode === 'blitz') {
-    afterBlitzWord(blitzRun, won, game.answer);
+    if (game.status !== 'playing') afterBlitzWord(blitzRun, won, game.answer);
     return;
   }
 
@@ -962,21 +1027,26 @@ async function submitGuess() {
     bounceRow(rowIndex);
     playWin();
     burstConfetti();
-    scheduleStats(profile, mode, game, REDUCED_MOTION ? 600 : 1800);
+    scheduleStats(profile, mode, game, REDUCED_MOTION ? 600 : 1800, unlocked);
   } else if (game.status === 'lost') {
     toast(game.answer, 2600);
     playLose();
-    scheduleStats(profile, mode, game, 1800);
+    scheduleStats(profile, mode, game, 1800, unlocked);
   }
 }
 
-function scheduleStats(profile, mode, game, delay) {
+// Nach dem Ende einer Runde: erst neue Abzeichen feiern, dann das Ergebnis zeigen.
+// statsTimer bleibt so lange gesetzt, damit Enter in der Zwischenzeit kein neues Wort startet.
+function scheduleStats(profile, mode, game, delay, unlocked = []) {
   clearTimeout(state.statsTimer);
-  state.statsTimer = setTimeout(() => {
+  const stillHere = () => state.profile === profile && state.mode === mode && currentGame() === game;
+  const timer = setTimeout(async () => {
+    if (stillHere()) await showBadgePopups(unlocked);
+    if (state.statsTimer !== timer) return;
     state.statsTimer = null;
-    if (state.profile !== profile || state.mode !== mode || currentGame() !== game) return;
-    showStats({ fromGameEnd: true });
+    if (stillHere()) showStats({ fromGameEnd: true });
   }, delay);
+  state.statsTimer = timer;
 }
 
 // ---------- Statistik & Teilen ----------
@@ -988,9 +1058,14 @@ function modeLabel(mode, variant) {
 }
 
 function shareText() {
-  const { game, mode, variant } = state.statsView;
-  const score = game.status === 'won' ? game.guesses.length : 'X';
+  const { game, mode, variant, result } = state.statsView;
   const url = `${location.origin}${location.pathname}`;
+  if (mode === 'blitz') {
+    const row = result.words.map((w) => (w.solved ? '🟩' : '⬛')).join('');
+    const words = result.score === 1 ? 'Wort' : 'Wörter';
+    return `Wordle Deutsch Blitz ⚡ ${result.score} ${words} in ${BLITZ_SECONDS} Sekunden\n\n${row}\n\n${url}`;
+  }
+  const score = game.status === 'won' ? game.guesses.length : 'X';
   if (mode === 'extreme') {
     const { maxGuesses: max } = EXTREME_VARIANTS[variant];
     return `Wordle Deutsch Extrem ${modeLabel(mode, variant)} ${score}/${max}\n\n${extremeShareGrid(game)}\n\n${url}`;
@@ -1053,12 +1128,12 @@ function stopCountdown() {
   state.countdownTimer = null;
 }
 
-function showStats({ fromGameEnd = false } = {}) {
+function showStats({ fromGameEnd = false, tab = 'stats' } = {}) {
   if (!state.profile) return;
   if (state.busy && !fromGameEnd) return;
   if (fromGameEnd && document.querySelector('dialog[open]')) return;
   if (state.mode === 'blitz') {
-    showBlitzStats();
+    showBlitzStats(null, tab);
     return;
   }
   setBlitzView(false);
@@ -1091,7 +1166,6 @@ function showStats({ fromGameEnd = false } = {}) {
     }),
   );
 
-  renderAchievements();
   $('result-section').hidden = !finished;
   $('countdown').hidden = !(finished && mode === 'daily');
   stopCountdown();
@@ -1124,62 +1198,153 @@ function showStats({ fromGameEnd = false } = {}) {
       state.countdownTimer = setInterval(updateCountdown, 1000);
     }
   }
+  renderBadges();
+  selectStatsTab(tab);
   openDialog(els.statsDialog);
 }
 
 // ---------- Blitz ----------
 
-function newBlitzRound() {
-  return { answer: randomAnswer(SOLUTIONS, state.blitzRound?.answer), guesses: [], status: 'playing' };
+// status 'idle': wartet auf „Start“; 'over': Durchgang beendet.
+function newBlitzRound(status = 'playing') {
+  return { answer: randomAnswer(SOLUTIONS, state.blitzRound?.answer), guesses: [], status };
 }
 
-function blitzSeconds() {
-  return Math.max(0, Math.ceil((state.blitz.endsAt - Date.now()) / 1000));
+function blitzRemainingMs() {
+  const run = state.blitz;
+  return run?.phase === 'running' ? Math.max(0, run.endsAt - Date.now()) : BLITZ_SECONDS * 1000;
 }
 
 function blitzStatus() {
-  if (state.blitz?.running) return `⏱ ${blitzSeconds()} s · ${state.blitz.score} gelöst`;
-  if (state.blitzRound?.status === 'over') return '';
-  return `Tippe los! ${BLITZ_SECONDS} Sekunden, so viele Wörter wie möglich.`;
+  const run = state.blitz;
+  if (run?.phase === 'running') return `⏱ ${Math.ceil(blitzRemainingMs() / 1000)} s · ${run.score} gelöst`;
+  if (run?.phase === 'countdown') return 'Gleich geht’s los …';
+  if (state.blitzRound?.status === 'over') return 'Zeit um! Noch ein Durchgang?';
+  return `${BLITZ_SECONDS} Sekunden, so viele Wörter wie möglich. Bereit?`;
 }
 
-// Der Durchgang beginnt mit dem ersten Buchstaben.
-function startBlitzRun() {
-  state.blitz = { running: true, endsAt: Date.now() + BLITZ_SECONDS * 1000, score: 0, timer: null };
-  state.blitz.timer = setInterval(tickBlitz, 250);
-  renderCaption();
+// Zeitbalken, Start- und Überspringen-Knopf passend zum Durchgang.
+function renderBlitzBar() {
+  const on = state.mode === 'blitz';
+  $('blitz-bar').hidden = !on;
+  if (!on) return;
+  const run = state.blitz;
+  const running = run?.phase === 'running';
+  const left = blitzRemainingMs();
+  els.blitzStart.hidden = Boolean(run);
+  els.blitzStart.lastChild.textContent = state.blitzRound?.status === 'over' ? ' Nochmal' : ' Start';
+  els.blitzSkip.hidden = !running;
+  els.blitzSkip.disabled = state.busy || state.blitzRound?.status !== 'playing';
+  $('blitz-meter-fill').style.width = `${(left / (BLITZ_SECONDS * 1000)) * 100}%`;
+  $('blitz-meter').classList.toggle('is-urgent', running && left <= BLITZ_URGENT_MS);
+}
+
+function hintBlitzStart() {
+  if (Date.now() - state.blitzHintAt < 1800) return;
+  state.blitzHintAt = Date.now();
+  toast('Erst auf „Start“ drücken', 1400);
+}
+
+// 3, 2, 1, los! Erst danach lässt sich tippen.
+function startBlitzCountdown() {
+  if (state.mode !== 'blitz' || state.blitz || state.busy || !state.profile) return;
+  if (els.statsDialog.open) els.statsDialog.close();
+  clearToasts();
+  state.blitzRound = newBlitzRound('idle');
+  state.current = [];
+  const run = { phase: 'countdown', endsAt: 0, score: 0, words: [], timer: null, lastTick: null };
+  state.blitz = run;
+  renderAll();
+  const count = (n) => {
+    if (state.blitz !== run) return;
+    els.blitzCountdown.hidden = false;
+    els.blitzCountdown.replaceChildren(el('span', '', n > 0 ? String(n) : 'Los!'));
+    playCount(n);
+    if (n > 0) run.timer = setTimeout(() => count(n - 1), 800);
+    else startBlitzRun(run);
+  };
+  count(3);
+}
+
+function startBlitzRun(run) {
+  run.phase = 'running';
+  run.endsAt = Date.now() + BLITZ_SECONDS * 1000;
+  run.timer = setInterval(tickBlitz, 100);
+  state.blitzRound = newBlitzRound();
+  state.current = [];
+  renderAll();
+  setTimeout(() => {
+    if (state.blitz === run) els.blitzCountdown.hidden = true;
+  }, 650);
 }
 
 function tickBlitz() {
-  if (!state.blitz?.running) return;
+  const run = state.blitz;
+  if (run?.phase !== 'running') return;
+  const left = run.endsAt - Date.now();
   // Während ein Wort aufgedeckt wird, endet der Durchgang erst danach.
-  if (Date.now() >= state.blitz.endsAt && !state.busy) {
+  if (left <= 0 && !state.busy) {
     finishBlitz({ show: true });
     return;
+  }
+  const second = Math.ceil(left / 1000);
+  if (left > 0 && left <= BLITZ_URGENT_MS && second !== run.lastTick) {
+    run.lastTick = second;
+    playTick(second <= 3);
   }
   renderCaption();
 }
 
-// Beendet den Durchgang und speichert Bestwert und Anzahl der Durchgänge.
+// Beendet den Durchgang (oder bricht den Countdown ab) und speichert Bestwert, Durchgänge und Wörter.
+// show: Ergebnis anzeigen (nur wenn die Zeit regulär abgelaufen ist).
 function finishBlitz({ show = false } = {}) {
   const run = state.blitz;
-  if (!run?.running) return;
-  run.running = false;
+  if (!run) return;
+  clearTimeout(run.timer);
   clearInterval(run.timer);
   state.blitz = null;
-  if (state.blitzRound?.status === 'playing') state.blitzRound.status = 'over';
-  renderCaption();
-  const stats = state.profile?.data.blitzStats;
-  if (!stats) return;
-  const previousBest = stats.best;
+  els.blitzCountdown.hidden = true;
+  const round = state.blitzRound;
+  if (run.phase !== 'running') {
+    if (round) round.status = 'idle';
+    renderCaption();
+    return;
+  }
+  // Das angefangene Wort zählt als nicht gelöst.
+  if (round?.status === 'playing') run.words.push({ answer: round.answer, solved: false });
+  if (round) round.status = 'over';
+  state.current = [];
+  if (state.mode === 'blitz') renderAll();
+  const data = state.profile?.data;
+  if (!data) return;
+  const stats = data.blitzStats;
+  const isNewBest = run.score > 0 && run.score > stats.best;
   stats.best = Math.max(stats.best, run.score);
   stats.runs += 1;
+  stats.words += run.score;
+  const unlocked = collectAchievements();
   persist();
-  if (show) showBlitzStats({ score: run.score, isNewBest: run.score > 0 && run.score > previousBest });
+  if (!show) return;
+
+  playTimeUp();
+  const profile = state.profile;
+  const stillHere = () => state.profile === profile && state.mode === 'blitz' && !state.blitz;
+  const result = { score: run.score, words: run.words, isNewBest };
+  setTimeout(async () => {
+    if (!stillHere()) return;
+    if (isNewBest) {
+      playWin();
+      burstConfetti();
+    }
+    await showBadgePopups(unlocked);
+    // Das Konfetti erst fliegen lassen, bevor der Dialog es verdeckt.
+    if (isNewBest && unlocked.length === 0) await wait(REDUCED_MOTION ? 300 : 1500);
+    if (stillHere() && !document.querySelector('dialog[open]')) showBlitzStats(result);
+  }, 800);
 }
 
-function nextBlitzRound() {
-  if (!state.blitz?.running || state.mode !== 'blitz') return;
+function nextBlitzRound(run) {
+  if (state.blitz !== run || run.phase !== 'running' || state.mode !== 'blitz') return;
   state.blitzRound = newBlitzRound();
   state.current = [];
   renderAll();
@@ -1187,106 +1352,325 @@ function nextBlitzRound() {
 
 // Nach jedem Wort im Blitz: Punkt bei Sieg, die Lösung bei Niederlage, dann kurz Pause und das nächste Wort.
 function afterBlitzWord(run, won, answer) {
+  if (!run || state.blitz !== run) return;
+  run.words.push({ answer, solved: won });
   if (won) {
-    if (run?.running) run.score += 1;
-    toast('+1 🎉', 1200);
-    burstConfetti({ count: 30, duration: 1200 });
-    playWin();
+    run.score += 1;
+    toast(`+1 · ${run.score} gelöst`, 1100);
+    burstConfetti({ kind: 'burst', count: 45, origin: { x: 0.5, y: 0.4 }, power: 10 });
+    playWin({ short: true });
   } else {
-    toast(answer, 1800);
+    toast(answer, 1600);
     playLose();
   }
   renderCaption();
-  if (run?.running) setTimeout(nextBlitzRound, BLITZ_PAUSE);
+  setTimeout(() => nextBlitzRound(run), won ? BLITZ_PAUSE - 400 : BLITZ_PAUSE);
 }
 
-// Im Statistik-Dialog stehen im Blitz Bestwert und Durchgänge statt der normalen Zahlen.
+// Wort überspringen: zählt als nicht gelöst, kostet aber keine Zeit außer der schon verbrauchten.
+function skipBlitzWord() {
+  const run = state.blitz;
+  const round = state.blitzRound;
+  if (run?.phase !== 'running' || state.busy || round?.status !== 'playing') return;
+  run.words.push({ answer: round.answer, solved: false });
+  round.status = 'lost';
+  toast(round.answer, 1200);
+  nextBlitzRound(run);
+}
+
+// Im Statistik-Dialog stehen im Blitz Bestwert, Durchgänge und Schnitt statt der normalen Zahlen.
 function setBlitzView(on) {
   $('blitz-stats').hidden = !on;
   $('stats-numbers').hidden = on;
   $('distribution').hidden = on;
   $('distribution-title').hidden = on;
-  $('share-button').hidden = on;
   $('duden-link').hidden = on;
+  $('result-tiles').hidden = on;
+  $('result-word').hidden = on;
+  $('blitz-result').hidden = !on;
 }
 
-function showBlitzStats(result = null) {
+function showBlitzStats(result = null, tab = 'stats') {
   setBlitzView(true);
-  const { best, runs } = state.profile.data.blitzStats;
+  const { best, runs, words } = state.profile.data.blitzStats;
   $('blitz-best').textContent = best;
   $('blitz-runs').textContent = runs;
-  $('stats-mode').textContent = 'Blitz';
+  $('blitz-average').textContent = runs ? (words / runs).toLocaleString('de-DE', { maximumFractionDigits: 1 }) : '0';
+  $('stats-mode').textContent = '⚡ Blitz';
   $('result-section').hidden = !result;
   $('countdown').hidden = true;
   stopCountdown();
-  state.statsView = null;
+  state.statsView = result ? { mode: 'blitz', result } : null;
   if (result) {
-    $('result-title').textContent = 'Blitz vorbei! ⏱';
-    $('result-tiles').replaceChildren();
-    let message = `${result.score} ${result.score === 1 ? 'Wort' : 'Wörter'} gelöst.`;
-    if (result.isNewBest) message += ' Neue Bestzeit! 🎉';
-    $('result-word').textContent = message;
+    $('result-title').textContent = 'Zeit um! ⏱';
+    $('blitz-score').textContent = result.score;
+    $('blitz-score-label').textContent = result.score === 1 ? 'Wort gelöst' : 'Wörter gelöst';
+    $('blitz-best-note').hidden = !result.isNewBest;
+    const rows = blitzRanking(rankingProfiles());
+    const place = rankOf(rows, state.profile.id, (row) => row.best);
+    $('blitz-rank').textContent =
+      rows.length > 1 && best > 0 && place ? `Mit deinem Bestwert ${best} bist du auf Platz ${place} von ${rows.length}.` : '';
+    $('blitz-words').replaceChildren(
+      ...result.words.map((w) => {
+        const li = el('li', w.solved ? 'is-solved' : 'is-missed', w.answer);
+        li.setAttribute('aria-label', `${w.answer}, ${w.solved ? 'gelöst' : 'nicht gelöst'}`);
+        return li;
+      }),
+    );
     $('next-label').textContent = 'Nochmal';
   }
-  renderAchievements();
+  renderBadges();
+  selectStatsTab(tab);
   openDialog(els.statsDialog);
 }
 
-// Abzeichen des aktuellen Profils im Statistik-Dialog; nicht erreichte sind ausgegraut, mit Beschreibung.
-function renderAchievements() {
-  els.achievementList.replaceChildren(
-    ...achievements(state.profile.data).map((a) => {
-      const li = document.createElement('li');
-      li.className = a.earned ? 'achievement is-earned' : 'achievement';
-      const icon = Object.assign(document.createElement('span'), { className: 'achievement-icon', textContent: a.icon });
-      icon.setAttribute('aria-hidden', 'true');
-      const title = Object.assign(document.createElement('span'), { className: 'achievement-title', textContent: a.title });
-      const text = Object.assign(document.createElement('span'), { className: 'achievement-text', textContent: a.text });
-      const status = Object.assign(document.createElement('span'), {
-        className: 'sr-only',
-        textContent: a.earned ? 'erreicht' : 'noch nicht erreicht',
-      });
-      li.append(icon, title, text, status);
+// ---------- Abzeichen ----------
+
+function formatDate(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('de-DE', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// Trägt neu erreichte Abzeichen mit Datum ins Profil ein (wird mit dem Profil gespeichert).
+function collectAchievements() {
+  const unlocked = unlockAchievements(state.profile.data);
+  for (const badge of unlocked) state.unseenBadges.add(badge.id);
+  return unlocked;
+}
+
+function badgeItem(badge) {
+  const li = el('li', badge.earned ? 'badge is-earned' : 'badge');
+  li.dataset.tier = badge.tier;
+  const medal = el('span', 'badge-medal', badge.icon);
+  medal.setAttribute('aria-hidden', 'true');
+  li.append(medal, el('span', 'badge-title', badge.title), el('span', 'badge-text', badge.text));
+  if (badge.earned) {
+    const date = badge.earnedAt ? formatDate(badge.earnedAt) : '';
+    li.append(el('span', 'badge-date', date ? `${TIER_LABEL[badge.tier]} · ${date}` : TIER_LABEL[badge.tier]));
+    if (state.unseenBadges.has(badge.id)) li.append(el('span', 'badge-new', 'Neu'));
+    li.append(el('span', 'sr-only', 'erreicht'));
+  } else {
+    const progress = el('div', 'badge-progress');
+    if (badge.target > 1) {
+      const meter = el('div', 'meter');
+      meter.setAttribute('aria-hidden', 'true');
+      const fill = el('span');
+      fill.style.width = `${(badge.progress / badge.target) * 100}%`;
+      meter.append(fill);
+      progress.append(meter, el('small', '', `${badge.progress} / ${badge.target}`));
+    } else {
+      progress.append(el('small', '', 'Noch offen'));
+    }
+    li.append(progress, el('span', 'sr-only', `noch nicht erreicht, ${badge.progress} von ${badge.target}`));
+  }
+  return li;
+}
+
+// Abzeichen-Reiter im Statistik-Dialog: Übersicht nach Stufen und alle Abzeichen nach Gruppen.
+function renderBadges() {
+  const list = achievements(state.profile.data);
+  const earned = list.filter((a) => a.earned);
+  const tierCount = (tier) => earned.filter((a) => a.tier === tier).length;
+  $('badge-count').textContent = `${earned.length}/${list.length}`;
+  $('badge-count').classList.toggle('has-new', state.unseenBadges.size > 0);
+  $('badge-summary-count').textContent = earned.length;
+  $('badge-summary-total').textContent = list.length;
+  $('badge-summary-bar').style.width = `${(earned.length / list.length) * 100}%`;
+  $('badge-gold').textContent = tierCount('gold');
+  $('badge-silver').textContent = tierCount('silver');
+  $('badge-bronze').textContent = tierCount('bronze');
+  $('badge-groups').replaceChildren(
+    ...ACHIEVEMENT_GROUPS.map((group) => {
+      const items = list.filter((a) => a.group === group.id);
+      const section = el('section', 'badge-group');
+      const heading = el('h3', '', group.title);
+      heading.append(el('span', 'badge-group-count', `${items.filter((a) => a.earned).length}/${items.length}`));
+      const grid = el('ul', 'badge-grid');
+      grid.append(...items.map(badgeItem));
+      section.append(heading, grid);
+      return section;
+    }),
+  );
+}
+
+function selectStatsTab(tab) {
+  const badges = tab === 'badges';
+  state.statsTab = badges ? 'badges' : 'stats';
+  $('tab-stats').setAttribute('aria-selected', String(!badges));
+  $('tab-badges').setAttribute('aria-selected', String(badges));
+  $('panel-stats').hidden = badges;
+  $('panel-badges').hidden = !badges;
+  if (badges) {
+    renderBadges();
+    // Einmal angesehen, sind die neuen Abzeichen beim nächsten Mal nicht mehr „neu“.
+    state.unseenBadges.clear();
+    $('badge-count').classList.remove('has-new');
+  }
+}
+
+// Zeigt neue Abzeichen nacheinander groß an, mit Klang und Konfetti in der Farbe der Stufe.
+// Schließt sich von selbst, per Klick oder mit Enter, Leertaste oder Escape.
+function showBadgePopups(list) {
+  if (!list.length) return Promise.resolve();
+  return new Promise((resolve) => {
+    const popup = { queue: [...list], timer: null, next: null };
+    popup.next = () => {
+      clearTimeout(popup.timer);
+      const badge = popup.queue.shift();
+      if (!badge) {
+        els.badgePopup.hidden = true;
+        if (state.badgePopup === popup) state.badgePopup = null;
+        resolve();
+        return;
+      }
+      els.badgePopup.dataset.tier = badge.tier;
+      $('badge-popup-icon').textContent = badge.icon;
+      $('badge-popup-title').textContent = badge.title;
+      $('badge-popup-text').textContent = badge.text;
+      $('badge-popup-tier').textContent = TIER_LABEL[badge.tier];
+      els.badgePopup.hidden = false;
+      // Animation für jedes Abzeichen neu starten.
+      for (const node of [els.badgePopup.firstElementChild, $('badge-popup-icon')]) {
+        node.style.animation = 'none';
+        void node.offsetWidth;
+        node.style.animation = '';
+      }
+      state.unseenBadges.add(badge.id);
+      playBadge(badge.tier);
+      burstConfetti({ kind: 'burst', count: badge.tier === 'gold' ? 110 : 70, origin: { x: 0.5, y: 0.4 }, colors: TIER_CONFETTI[badge.tier], power: 12 });
+      popup.timer = setTimeout(popup.next, BADGE_POPUP_MS);
+    };
+    state.badgePopup = popup;
+    popup.next();
+  });
+}
+
+function dismissBadgePopups() {
+  const popup = state.badgePopup;
+  if (!popup) return;
+  popup.queue.length = 0;
+  popup.next();
+}
+
+// ---------- Rangliste ----------
+
+const RANKING_CAPTION = {
+  daily: () => `Tagesrätsel #${puzzleNumber(state.today)}: weniger Versuche zuerst, bei Gleichstand die schnellere Zeit.`,
+  streak: () => 'Aktuelle Serie im Tagesrätsel, bei Gleichstand zählt die beste Serie.',
+  blitz: () => `Meiste Wörter in einem Blitz-Durchgang (${BLITZ_SECONDS} Sekunden).`,
+  badges: () => 'Erreichte Abzeichen, bei Gleichstand zählen Gold und dann Silber.',
+};
+
+// Alle Profile für die Rangliste; das eigene mit seinem aktuellen, evtl. noch nicht gespeicherten Stand.
+function rankingProfiles() {
+  const list = state.profiles.map((p) => (state.profile && p.id === state.profile.id ? state.profile : p));
+  if (state.profile && !list.includes(state.profile)) list.push(state.profile);
+  return list;
+}
+
+// Zeilen einer Tafel: Platz (nur wer schon etwas erreicht hat), Wert rechts und eine Zeile unter dem Namen.
+function rankingRows(board, profiles) {
+  if (board === 'daily') {
+    const rows = dailyRanking(profiles, state.today);
+    return rows.map((row) => {
+      if (row.tier === 0) {
+        const place = rankOf(rows, row.id, (r) => `${r.tier}:${r.guesses}:${r.ms}`);
+        return { ...row, place, value: `${row.guesses}/6`, sub: row.ms != null ? `gelöst in ${formatDuration(row.ms)}` : 'gelöst' };
+      }
+      if (row.tier === 1) return { ...row, value: '✗', sub: 'nicht gelöst' };
+      if (row.tier === 2) return { ...row, value: '…', sub: `spielt gerade · ${row.guesses}/6`, empty: true };
+      return { ...row, value: '–', sub: 'noch nicht gespielt', empty: true };
+    });
+  }
+  if (board === 'streak') {
+    const rows = streakRanking(profiles, state.today);
+    return rows.map((row) => ({
+      ...row,
+      place: row.streak > 0 ? rankOf(rows, row.id, (r) => r.streak) : null,
+      value: row.streak > 0 ? `🔥 ${row.streak}` : '0',
+      sub: `beste Serie: ${row.best}`,
+      empty: row.streak === 0,
+    }));
+  }
+  if (board === 'blitz') {
+    const rows = blitzRanking(profiles);
+    return rows.map((row) => ({
+      ...row,
+      place: row.best > 0 ? rankOf(rows, row.id, (r) => r.best) : null,
+      value: row.best > 0 ? `⚡ ${row.best}` : '–',
+      sub: row.runs ? `${row.runs} ${row.runs === 1 ? 'Durchgang' : 'Durchgänge'}` : 'noch nicht gespielt',
+      empty: row.best === 0,
+    }));
+  }
+  const rows = achievementRanking(profiles);
+  return rows.map((row) => ({
+    ...row,
+    place: row.count > 0 ? rankOf(rows, row.id, (r) => `${r.count}:${r.gold}:${r.silver}`) : null,
+    value: `🏅 ${row.count}`,
+    sub: `${row.gold} Gold · ${row.silver} Silber`,
+    empty: row.count === 0,
+  }));
+}
+
+function renderRanking() {
+  const board = state.rankingBoard;
+  for (const tab of els.rankingDialog.querySelectorAll('[data-board]')) {
+    tab.setAttribute('aria-selected', String(tab.dataset.board === board));
+  }
+  $('ranking-caption').textContent = RANKING_CAPTION[board]();
+  const rows = rankingRows(board, rankingProfiles());
+  if (rows.length === 0) {
+    els.rankingList.replaceChildren(el('li', 'ranking-row is-empty', 'Noch keine Profile.'));
+    return;
+  }
+  // Hervorgehoben wird das gerade gespielte Profil, auf der Startseite das zuletzt gespielte.
+  const ownId = state.profile?.id ?? lastProfileId();
+  els.rankingList.replaceChildren(
+    ...rows.map((row) => {
+      const li = el('li', 'ranking-row');
+      li.classList.toggle('is-me', row.id === ownId);
+      li.classList.toggle('is-empty', Boolean(row.empty));
+      const place = el('span', 'ranking-place', row.place ? MEDALS[row.place - 1] || `${row.place}.` : '–');
+      place.classList.toggle('is-medal', Boolean(row.place && row.place <= MEDALS.length));
+      place.setAttribute('aria-label', row.place ? `Platz ${row.place}` : 'ohne Platz');
+      const avatar = el('span', 'avatar');
+      avatar.setAttribute('aria-hidden', 'true');
+      fillAvatar(avatar, row.name);
+      const who = el('span', 'ranking-who');
+      who.append(el('span', 'ranking-name', row.name), el('span', 'ranking-sub', row.sub));
+      li.append(place, avatar, who, el('span', 'ranking-value', row.value));
       return li;
     }),
   );
 }
 
-// Rangliste: wer hat heute schon gelöst und wer hat die längste Serie. Stand aus den geladenen Profilen.
-function renderRanking() {
-  const describe = (row) => {
-    if (row.tier === 0) return `✓ ${row.guesses}/6${row.ms != null ? ` · ${formatDuration(row.ms)}` : ''}`;
-    if (row.tier === 1) return '✗ verloren';
-    if (row.tier === 2) return `läuft · ${row.guesses}/6`;
-    return 'noch offen';
-  };
-  const entry = (name, value) => {
-    const li = document.createElement('li');
-    const nameEl = Object.assign(document.createElement('span'), { className: 'ranking-name', textContent: name });
-    const valueEl = Object.assign(document.createElement('span'), { className: 'ranking-value', textContent: value });
-    li.append(nameEl, valueEl);
-    return li;
-  };
-  els.rankingDaily.replaceChildren(
-    ...dailyRanking(state.profiles, state.today).map((row) => entry(row.name, describe(row))),
-  );
-  els.rankingStreak.replaceChildren(
-    ...streakRanking(state.profiles, state.today).map((row) => entry(row.name, row.streak ? `🔥 ${row.streak}` : '–')),
-  );
-}
-
-function openRanking() {
+function openRanking(board = state.rankingBoard) {
+  state.rankingBoard = RANKING_CAPTION[board] ? board : 'daily';
   renderRanking();
   openDialog(els.rankingDialog);
   // Im Hintergrund auffrischen, damit auch Ergebnisse von anderen Geräten erscheinen.
-  if (isCloud) loadProfiles({ quiet: true }).then(() => {
-    if (els.rankingDialog.open) renderRanking();
-  });
+  if (isCloud) {
+    loadProfiles({ quiet: true }).then(() => {
+      if (els.rankingDialog.open) renderRanking();
+    });
+  }
+}
+
+// Vom Statistik-Dialog aus: die Tafel, die zum gerade Gezeigten passt.
+function openRankingFromStats() {
+  if (state.statsTab === 'badges') openRanking('badges');
+  else if (state.mode === 'blitz' || state.mode === 'daily') openRanking(state.mode);
+  else openRanking();
 }
 
 function nextRound() {
   if (state.busy || !state.profile) return;
   if (els.statsDialog.open) els.statsDialog.close();
+  if (state.mode === 'blitz') {
+    startBlitzCountdown();
+    return;
+  }
   // setMode startet im Endlos- und Extrem-Modus automatisch ein neues Wort, wenn das letzte beendet ist.
   setMode(state.mode === 'daily' ? 'endless' : state.mode);
 }
@@ -1334,7 +1718,7 @@ function bindEvents() {
     if (button && !button.disabled) importProfile(button);
   });
 
-  els.rankingButton.addEventListener('click', openRanking);
+  els.rankingButton.addEventListener('click', () => openRanking());
   els.newProfileButton.addEventListener('click', () => {
     els.newProfileForm.reset();
     els.newProfileError.textContent = '';
@@ -1359,7 +1743,7 @@ function bindEvents() {
       if (state.busy || state.switching || !state.profile) return;
       const mode = tab.dataset.mode;
       // Ein laufender Blitz-Durchgang darf nicht durch Antippen des Reiters neu beginnen.
-      if (mode === 'blitz' && state.mode === 'blitz' && state.blitz?.running) return;
+      if (mode === 'blitz' && state.mode === 'blitz' && state.blitz) return;
       if (mode !== state.mode) setMode(mode);
       // Nochmal auf den Reiter tippen startet nach einer beendeten Runde das nächste Wort.
       else if (mode !== 'daily' && currentGame().status !== 'playing' && !state.statsTimer) setMode(mode);
@@ -1368,6 +1752,8 @@ function bindEvents() {
   for (const chip of document.querySelectorAll('.variant-chip')) {
     chip.addEventListener('click', () => selectVariant(chip.dataset.variant));
   }
+  els.blitzStart.addEventListener('click', startBlitzCountdown);
+  els.blitzSkip.addEventListener('click', skipBlitzWord);
 
   els.keyboard.addEventListener('click', (event) => {
     const key = event.target.closest('.key');
@@ -1386,6 +1772,14 @@ function bindEvents() {
   );
 
   document.addEventListener('keydown', (event) => {
+    // Solange ein neues Abzeichen gezeigt wird, schließen Enter, Leertaste und Escape die Meldung.
+    if (state.badgePopup) {
+      if (event.key === 'Enter' || event.key === ' ' || event.key === 'Escape') {
+        event.preventDefault();
+        if (!event.repeat) state.badgePopup.next();
+      }
+      return;
+    }
     if (els.gameScreen.hidden || document.querySelector('dialog[open]')) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target;
@@ -1438,6 +1832,16 @@ function bindEvents() {
 
   $('share-button').addEventListener('click', share);
   $('next-button').addEventListener('click', nextRound);
+  $('tab-stats').addEventListener('click', () => selectStatsTab('stats'));
+  $('tab-badges').addEventListener('click', () => selectStatsTab('badges'));
+  $('stats-ranking').addEventListener('click', openRankingFromStats);
+  for (const tab of els.rankingDialog.querySelectorAll('[data-board]')) {
+    tab.addEventListener('click', () => {
+      state.rankingBoard = tab.dataset.board;
+      renderRanking();
+    });
+  }
+  els.badgePopup.addEventListener('click', () => state.badgePopup?.next());
 
   els.soundToggle.addEventListener('change', () => {
     setSoundEnabled(els.soundToggle.checked);
