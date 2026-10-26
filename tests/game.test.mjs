@@ -1,0 +1,124 @@
+// Tests für die Spiellogik: node --test tests/
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  evaluateGuess,
+  hardModeViolation,
+  keyboardStates,
+  berlinDayKey,
+  dayNumber,
+  shiftDayKey,
+  dailyAnswer,
+  recordDailyResult,
+  recordEndlessResult,
+  currentDailyStreak,
+  emptyStats,
+  normalizeProfileData,
+  shareGrid,
+} from '../js/game.js';
+import { SOLUTIONS, ALLOWED } from '../js/words.js';
+
+test('alle Buchstaben richtig', () => {
+  assert.deepEqual(evaluateGuess('APFEL', 'APFEL'), ['correct', 'correct', 'correct', 'correct', 'correct']);
+});
+
+test('doppelte Buchstaben werden nur so oft markiert, wie sie vorkommen', () => {
+  // Lösung hat ein E, Versuch zwei: nur eins darf gelb sein.
+  assert.deepEqual(evaluateGuess('EBENE', 'TRAUM'), ['absent', 'absent', 'absent', 'absent', 'absent']);
+  assert.deepEqual(evaluateGuess('EEXXX', 'APFEL'), ['present', 'absent', 'absent', 'absent', 'absent']);
+  // Grün hat Vorrang vor Gelb.
+  assert.deepEqual(evaluateGuess('LEBEN', 'LESEN'), ['correct', 'correct', 'absent', 'correct', 'correct']);
+  assert.deepEqual(evaluateGuess('EBENE', 'ENKEL'), ['correct', 'absent', 'present', 'present', 'absent']);
+});
+
+test('Umlaute zählen als ein Buchstabe', () => {
+  assert.deepEqual(evaluateGuess('KÖNIG', 'KÖNIG'), Array(5).fill('correct'));
+  assert.deepEqual(evaluateGuess('KONIG', 'KÖNIG'), ['correct', 'absent', 'correct', 'correct', 'correct']);
+});
+
+test('schwerer Modus verlangt grüne und gelbe Buchstaben', () => {
+  assert.equal(hardModeViolation('BLUME', [], 'BLUSE'), null);
+  assert.equal(hardModeViolation('KLAGE', ['BLUME'], 'BLUSE'), '1. Buchstabe muss B sein');
+  assert.equal(hardModeViolation('BLASE', ['BLUME'], 'BLUSE'), '3. Buchstabe muss U sein');
+  assert.equal(hardModeViolation('LITER', ['PILOT'], 'TITEL'), null);
+  assert.equal(hardModeViolation('TIGER', ['PILOT'], 'TITEL'), 'Wort muss L enthalten');
+  assert.equal(hardModeViolation('ESSEN', ['PILOT'], 'TITEL'), '2. Buchstabe muss I sein');
+  assert.equal(hardModeViolation('NIXEN', ['PILOT'], 'TITEL'), 'Wort muss L enthalten');
+});
+
+test('Tastatur zeigt den besten bekannten Zustand', () => {
+  const states = keyboardStates(['LESEN', 'ENKEL'], 'ESSEN');
+  assert.equal(states.E, 'correct');
+  assert.equal(states.S, 'correct');
+  assert.equal(states.L, 'absent');
+  assert.equal(states.K, 'absent');
+  assert.equal(states.N, 'correct');
+});
+
+test('Tageszählung nach deutscher Zeit', () => {
+  assert.equal(dayNumber('2026-01-01'), 0);
+  assert.equal(dayNumber('2026-10-26'), 298);
+  assert.equal(shiftDayKey('2026-03-01', -1), '2026-02-28');
+  assert.equal(shiftDayKey('2026-03-29', 1), '2026-03-30');
+  // 23:30 UTC am 26.10. ist in Berlin schon der 27.10.
+  assert.equal(berlinDayKey(new Date('2026-10-26T23:30:00Z')), '2026-10-27');
+  assert.equal(berlinDayKey(new Date('2026-10-26T22:59:00Z')), '2026-10-26');
+});
+
+test('Tageswort ist fest und wechselt täglich', () => {
+  const a = dailyAnswer('2026-10-26', SOLUTIONS);
+  assert.equal(dailyAnswer('2026-10-26', SOLUTIONS), a);
+  assert.ok(SOLUTIONS.includes(a));
+  const days = Array.from({ length: 60 }, (_, i) => dailyAnswer(shiftDayKey('2026-10-26', i), SOLUTIONS));
+  assert.equal(new Set(days).size, days.length);
+});
+
+test('Tagesserie zählt nur aufeinanderfolgende Siege', () => {
+  let stats = emptyStats();
+  stats = recordDailyResult(stats, '2026-10-24', true, 3);
+  stats = recordDailyResult(stats, '2026-10-25', true, 4);
+  assert.equal(stats.streak, 2);
+  assert.equal(currentDailyStreak(stats, '2026-10-26'), 2);
+  assert.equal(currentDailyStreak(stats, '2026-10-27'), 0);
+  stats = recordDailyResult(stats, '2026-10-27', true, 2);
+  assert.equal(stats.streak, 1);
+  assert.equal(stats.maxStreak, 2);
+  stats = recordDailyResult(stats, '2026-10-28', false, 6);
+  assert.equal(stats.streak, 0);
+  assert.equal(stats.played, 4);
+  assert.equal(stats.won, 3);
+  assert.deepEqual(stats.dist, [0, 1, 1, 1, 0, 0]);
+});
+
+test('Endlos-Serie zählt Siege in Folge', () => {
+  let stats = emptyStats();
+  stats = recordEndlessResult(stats, true, 1);
+  stats = recordEndlessResult(stats, true, 6);
+  stats = recordEndlessResult(stats, false, 6);
+  assert.equal(stats.streak, 0);
+  assert.equal(stats.maxStreak, 2);
+  assert.deepEqual(stats.dist, [1, 0, 0, 0, 0, 1]);
+});
+
+test('kaputte Profildaten werden aufgefüllt', () => {
+  const data = normalizeProfileData({ stats: { daily: { played: 3 } } });
+  assert.equal(data.stats.daily.played, 3);
+  assert.deepEqual(data.stats.endless, emptyStats());
+  assert.equal(data.settings.hardMode, false);
+  assert.equal(normalizeProfileData(null).version, 1);
+});
+
+test('Teilen-Raster', () => {
+  assert.equal(shareGrid(['LESEN', 'ESSEN'], 'ESSEN'), '⬛🟨🟩🟩🟩\n🟩🟩🟩🟩🟩');
+});
+
+test('Wortlisten sind gültig', () => {
+  const valid = (w) => /^[A-ZÄÖÜ]+$/.test(w) && Array.from(w).length === 5;
+  assert.ok(SOLUTIONS.length >= 300, `nur ${SOLUTIONS.length} Lösungswörter`);
+  assert.deepEqual(SOLUTIONS.filter((w) => !valid(w)), []);
+  assert.deepEqual(ALLOWED.filter((w) => !valid(w)), []);
+  assert.equal(new Set(SOLUTIONS).size, SOLUTIONS.length);
+  const allowed = new Set(ALLOWED);
+  assert.deepEqual(SOLUTIONS.filter((w) => !allowed.has(w)), []);
+});
