@@ -20,6 +20,9 @@ const SELECT = 'select=id,name,data,updated_at';
 const memoryPending = new Map();
 const inflight = new Map();
 let conflictHandler = null;
+// Das gerade gespielte Profil: Jede Speicherung dafür hält dessen Serverstand aktuell,
+// auch wenn sie z. B. vom "online"-Ereignis ausgelöst wurde.
+let activeProfile = null;
 
 export class StoreError extends Error {
   constructor(message, code) {
@@ -71,8 +74,26 @@ export function timeValue(stamp) {
 }
 
 // Wird aufgerufen, wenn ein Profil nach einem Speicherkonflikt mit dem Serverstand zusammengeführt wurde.
+// handler(profile, previousData) – previousData ist der Stand davor.
 export function onConflictMerged(handler) {
   conflictHandler = handler;
+}
+
+export function setActiveProfile(profile) {
+  activeProfile = profile;
+}
+
+// Übernimmt zusammengeführte Daten, behält aber unveränderte Spiele als dieselben Objekte,
+// damit ein laufendes Aufdecken nicht unterbrochen wird.
+function keepUnchangedGames(live, merged) {
+  const same = (a, b) => a && b && JSON.stringify(a) === JSON.stringify(b);
+  const result = { ...merged, extreme: { ...merged.extreme } };
+  if (same(live.daily, merged.daily)) result.daily = live.daily;
+  if (same(live.endless, merged.endless)) result.endless = live.endless;
+  for (const key of Object.keys(result.extreme)) {
+    if (same(live.extreme?.[key], result.extreme[key])) result.extreme[key] = live.extreme[key];
+  }
+  return result;
 }
 
 // --- Supabase (REST, ohne Zusatzbibliothek) ---
@@ -155,6 +176,13 @@ export function hasPendingSave(id) {
   return isCloud && readPending(id) !== null;
 }
 
+// Noch nicht hochgeladener Stand eines Profils (oder null).
+export function pendingData(id) {
+  if (!isCloud) return null;
+  const entry = readPending(id);
+  return entry ? normalizeProfileData(clone(entry.data)) : null;
+}
+
 // --- Öffentliche Schnittstelle ---
 
 export async function listProfiles() {
@@ -232,8 +260,9 @@ export async function saveProfile(profile) {
 // damit eine ältere Speicherung nie eine neuere überholt.
 export function flushPending(id, profile = null) {
   if (!isCloud) return Promise.resolve({ status: 'ok' });
+  const target = profile || (activeProfile?.id === id ? activeProfile : null);
   const previous = inflight.get(id) || Promise.resolve();
-  const run = previous.catch(() => {}).then(() => flushNow(id, profile));
+  const run = previous.catch(() => {}).then(() => flushNow(id, target));
   inflight.set(id, run);
   const cleanup = () => {
     if (inflight.get(id) === run) inflight.delete(id);
@@ -253,16 +282,18 @@ async function flushNow(id, profile) {
     if (!entry) return { status: 'ok' };
 
     // Nur speichern, wenn auf dem Server noch der Stand liegt, auf dem diese Daten aufbauen.
-    const guard = entry.base ? `&updated_at=eq.${encodeURIComponent(entry.base)}` : '';
-    let rows;
-    try {
-      rows = await request(`profiles?id=eq.${encodeURIComponent(id)}${guard}&${SELECT}`, {
-        method: 'PATCH',
-        headers: { Prefer: 'return=representation' },
-        body: JSON.stringify({ data: entry.data, updated_at: new Date().toISOString() }),
-      });
-    } catch (error) {
-      return { status: error.code === 'offline' ? 'offline' : 'error', error };
+    // Ohne bekannten Stand (ältere Version) wird nie blind überschrieben, sondern zusammengeführt.
+    let rows = [];
+    if (entry.base) {
+      try {
+        rows = await request(`profiles?id=eq.${encodeURIComponent(id)}&updated_at=eq.${encodeURIComponent(entry.base)}&${SELECT}`, {
+          method: 'PATCH',
+          headers: { Prefer: 'return=representation' },
+          body: JSON.stringify({ data: entry.data, updated_at: new Date().toISOString() }),
+        });
+      } catch (error) {
+        return { status: error.code === 'offline' ? 'offline' : 'error', error };
+      }
     }
 
     if (rows.length > 0) {
@@ -290,9 +321,10 @@ async function flushNow(id, profile) {
     const merged = mergeProfileData(remote.data, latest.data);
     writePending(id, { data: clone(merged), base: remote.updatedAt });
     if (profile) {
-      profile.data = merged;
+      const previousData = profile.data;
+      profile.data = keepUnchangedGames(previousData, merged);
       profile.updatedAt = remote.updatedAt;
-      conflictHandler?.(profile);
+      conflictHandler?.(profile, previousData);
     }
   }
   return { status: 'error', error: new StoreError('Speichern fehlgeschlagen.', 'conflict') };

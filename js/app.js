@@ -2,6 +2,7 @@ import { SOLUTIONS, ALLOWED } from './words.js';
 import {
   WORD_LENGTH,
   MAX_GUESSES,
+  EXTREME_VARIANTS,
   letters,
   evaluateGuess,
   hardModeViolation,
@@ -15,6 +16,11 @@ import {
   currentDailyStreak,
   emptyProfileData,
   shareGrid,
+  newExtremeGame,
+  playExtremeGuess,
+  devilCandidates,
+  extremeKeyboardStates,
+  extremeShareGrid,
 } from './game.js';
 import {
   isCloud,
@@ -25,9 +31,11 @@ import {
   flushPending,
   flushAllPending,
   hasPendingSave,
+  pendingData,
   cleanName,
   timeValue,
   onConflictMerged,
+  setActiveProfile,
   listLocalOnlyProfiles,
   importLocalProfile,
 } from './store.js';
@@ -39,7 +47,7 @@ const CONTRAST_KEY = 'wordle-de:contrast';
 const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const FLIP_STEP = REDUCED_MOTION ? 0 : 300;
 const FLIP_HALF = REDUCED_MOTION ? 0 : 250;
-const PRAISE = ['Genial!', 'Großartig!', 'Beeindruckend!', 'Super!', 'Gut gemacht!', 'Puh, knapp!'];
+const PRAISE = ['Genial!', 'Großartig!', 'Beeindruckend!', 'Super!', 'Gut gemacht!', 'Geschafft!', 'Stark!'];
 const AVATAR_COLORS = ['#538d4e', '#b59f3b', '#3d7cc9', '#c0392b', '#8e6bbf', '#d9822b', '#16a085', '#c2457a'];
 const KEY_ROWS = [
   ['Q', 'W', 'E', 'R', 'T', 'Z', 'U', 'I', 'O', 'P', 'Ü'],
@@ -53,6 +61,7 @@ const els = {
   profileScreen: $('profile-screen'),
   profileList: $('profile-list'),
   profileStatus: $('profile-status'),
+  profileToasts: $('profile-toasts'),
   localHint: $('local-hint'),
   localImport: $('local-import'),
   localImportList: $('local-import-list'),
@@ -64,6 +73,8 @@ const els = {
   gameScreen: $('game-screen'),
   switchProfile: $('switch-profile'),
   dailyNumber: $('daily-number'),
+  variantBar: $('variant-bar'),
+  variantCaption: $('variant-caption'),
   board: $('board'),
   keyboard: $('keyboard'),
   toasts: $('toasts'),
@@ -78,7 +89,7 @@ const els = {
 const state = {
   profiles: [],
   profile: null,
-  mode: 'daily',
+  mode: 'daily', // 'daily' | 'endless' | 'extreme'
   today: berlinDayKey(),
   current: [],
   busy: false, // Wort wird gerade aufgedeckt
@@ -89,6 +100,8 @@ const state = {
   statsTimer: null,
   countdownTimer: null,
   statsView: null, // Spiel, dessen Ergebnis der Statistik-Dialog gerade zeigt
+  boardShape: '',
+  boardIdentity: '',
 };
 
 // ---------- Hilfsfunktionen ----------
@@ -110,9 +123,10 @@ function writeSetting(key, value) {
   }
 }
 
-// Meldungen erscheinen im offenen Dialog, sonst über dem Spielfeld.
+// Meldungen erscheinen im offenen Dialog, sonst auf dem sichtbaren Bildschirm.
 function toast(message, duration = 1500) {
-  const host = document.querySelector('dialog[open] .toasts') || els.toasts;
+  const host =
+    document.querySelector('dialog[open] .toasts') || (els.gameScreen.hidden ? els.profileToasts : els.toasts);
   const el = document.createElement('div');
   el.className = 'toast';
   el.textContent = message;
@@ -281,6 +295,7 @@ function setProfileStatus(message, { error = false, retry = false } = {}) {
   }
 }
 
+// quiet: bereits angezeigte Profile stehen lassen und nur im Hintergrund auffrischen.
 async function loadProfiles({ quiet = false } = {}) {
   const token = ++state.loadToken;
   if (!quiet) setProfileStatus('Profile werden geladen …');
@@ -292,9 +307,16 @@ async function loadProfiles({ quiet = false } = {}) {
     renderProfiles();
     renderLocalImport();
   } catch (error) {
-    if (token !== state.loadToken || quiet) return;
-    setProfileStatus(error.message || 'Profile konnten nicht geladen werden.', { error: true, retry: true });
+    if (token !== state.loadToken) return;
+    if (quiet) setProfileStatus('Offline – zuletzt geladener Stand.');
+    else setProfileStatus(error.message || 'Profile konnten nicht geladen werden.', { error: true, retry: true });
   }
+}
+
+function replaceListedProfile(profile) {
+  const index = state.profiles.findIndex((p) => p.id === profile.id);
+  if (index >= 0) state.profiles[index] = profile;
+  else state.profiles.push(profile);
 }
 
 function showProfileScreen() {
@@ -303,12 +325,19 @@ function showProfileScreen() {
   clearTimeout(state.statsTimer);
   state.statsTimer = null;
   state.selectToken += 1;
+  // Den aktuellen Stand in der Liste behalten, falls das Neuladen offline scheitert.
+  if (state.profile) replaceListedProfile(state.profile);
   state.profile = null;
+  setActiveProfile(null);
   state.current = [];
   els.gameScreen.hidden = true;
   els.profileScreen.hidden = false;
   document.title = 'Wordle Deutsch';
-  loadProfiles();
+  if (state.profiles.length > 0) {
+    setProfileStatus('');
+    renderProfiles();
+  }
+  loadProfiles({ quiet: state.profiles.length > 0 });
 }
 
 async function selectProfile(id) {
@@ -328,7 +357,12 @@ async function selectProfile(id) {
     // Ein späterer Klick oder der Weg zurück zur Liste hat diese Auswahl überholt.
     if (token !== state.selectToken) return;
   }
+  // Noch nicht hochgeladene Runden dieses Geräts haben Vorrang vor einem älteren Listenstand.
+  const pending = pendingData(id);
+  if (pending) profile.data = pending;
+  replaceListedProfile(profile);
   state.profile = profile;
+  setActiveProfile(profile);
   writeSetting(LAST_PROFILE_KEY, id);
   state.today = berlinDayKey();
   ensureGames();
@@ -386,12 +420,19 @@ async function persist() {
   } else if (result.status === 'error') {
     toast(`${result.error?.message || 'Speichern fehlgeschlagen'} Wird erneut versucht.`, 3000);
   } else if (result.status === 'missing') {
+    if (state.profile === profile && !state.busy) {
+      state.profiles = state.profiles.filter((p) => p.id !== profile.id);
+      showProfileScreen();
+    }
     toast('Dieses Profil gibt es nicht mehr.', 3000);
-    if (state.profile === profile && !state.busy) showProfileScreen();
   }
 }
 
 // ---------- Spielstand ----------
+
+function extremeVariant() {
+  return state.profile.data.settings.extremeVariant;
+}
 
 function ensureGames() {
   const data = state.profile.data;
@@ -405,25 +446,49 @@ function ensureGames() {
   if (!data.endless) {
     data.endless = { answer: randomAnswer(SOLUTIONS), guesses: [], status: 'playing' };
   }
+  const variant = extremeVariant();
+  if (!data.extreme[variant]) data.extreme[variant] = newExtremeGame(variant, SOLUTIONS);
 }
 
 function currentGame() {
-  return state.mode === 'daily' ? state.profile.data.daily : state.profile.data.endless;
-}
-
-function currentAnswer() {
-  return currentGame().answer;
-}
-
-function gameIdentity() {
-  if (!state.profile) return '';
-  const game = currentGame();
-  return `${state.mode}:${game.day || ''}:${game.answer}:${game.guesses.length}:${game.status}`;
-}
-
-function startNextEndless() {
   const data = state.profile.data;
-  data.endless = { answer: randomAnswer(SOLUTIONS, data.endless?.answer), guesses: [], status: 'playing' };
+  if (state.mode === 'daily') return data.daily;
+  if (state.mode === 'endless') return data.endless;
+  return data.extreme[extremeVariant()];
+}
+
+function maxGuesses() {
+  return state.mode === 'extreme' ? EXTREME_VARIANTS[extremeVariant()].maxGuesses : MAX_GUESSES;
+}
+
+function currentStats() {
+  const stats = state.profile.data.stats;
+  return state.mode === 'extreme' ? stats.extreme[extremeVariant()] : stats[state.mode];
+}
+
+// Angezeigte Rückmeldung eines Versuchs: Farben pro Buchstabe oder (Mastermind) nur Anzahlen.
+function rowFeedback(game, row) {
+  return state.mode === 'extreme' ? game.feedback[row] : evaluateGuess(game.guesses[row], game.answer);
+}
+
+// Kennung des Spiels auf dem Bildschirm, um nach einem Abgleich zu erkennen, ob es noch dasselbe ist.
+function gameIdentity(data = state.profile?.data) {
+  if (!data) return '';
+  const game =
+    state.mode === 'daily' ? data.daily : state.mode === 'endless' ? data.endless : data.extreme?.[data.settings?.extremeVariant];
+  if (!game) return state.mode;
+  return [state.mode, game.id || game.day || '', game.answer || '', game.guesses.length, game.status].join(':');
+}
+
+// Neues Wort im Endlos- oder Extrem-Modus, wenn die letzte Runde beendet ist.
+function startNextRound() {
+  const data = state.profile.data;
+  if (state.mode === 'endless') {
+    data.endless = { answer: randomAnswer(SOLUTIONS, data.endless?.answer), guesses: [], status: 'playing' };
+  } else if (state.mode === 'extreme') {
+    const variant = extremeVariant();
+    data.extreme[variant] = newExtremeGame(variant, SOLUTIONS);
+  }
 }
 
 function setMode(mode) {
@@ -431,14 +496,36 @@ function setMode(mode) {
   state.current = [];
   clearTimeout(state.statsTimer);
   state.statsTimer = null;
-  if (mode === 'endless' && state.profile.data.endless.status !== 'playing') startNextEndless();
+  ensureGames();
+  if (mode !== 'daily' && currentGame().status !== 'playing') startNextRound();
   for (const tab of document.querySelectorAll('.mode-tab')) {
     tab.setAttribute('aria-pressed', String(tab.dataset.mode === mode));
   }
+  for (const chip of document.querySelectorAll('.variant-chip')) {
+    chip.setAttribute('aria-pressed', String(chip.dataset.variant === extremeVariant()));
+  }
+  els.variantBar.hidden = mode !== 'extreme';
   els.dailyNumber.textContent = `#${puzzleNumber(state.today)}`;
   clearToasts();
+  renderAll();
+}
+
+function renderAll() {
   renderBoard();
   renderKeyboardStates();
+  renderCaption();
+}
+
+function renderCaption() {
+  if (state.mode !== 'extreme') return;
+  const variant = extremeVariant();
+  const game = currentGame();
+  let text = EXTREME_VARIANTS[variant].caption;
+  if (variant === 'devil' && game.status === 'playing' && game.guesses.length > 0) {
+    const left = devilCandidates(game, SOLUTIONS).length;
+    text = left === 1 ? 'Nur noch ein Wort möglich!' : `Noch ${left} Wörter möglich.`;
+  }
+  els.variantCaption.textContent = text;
 }
 
 // Erkennt Mitternacht (deutsche Zeit) und lädt dann das neue Tagesrätsel.
@@ -460,21 +547,17 @@ function checkNewDay() {
     state.statsTimer = null;
     state.current = [];
     toast('Neues Tagesrätsel!', 2000);
-    renderBoard();
-    renderKeyboardStates();
+    renderAll();
   }
 }
 
 // Übernimmt einen Stand vom Server (oder aus einem Konflikt) und zeichnet neu.
-// Getippte Buchstaben bleiben erhalten, solange es dasselbe Spiel ist.
-function applyProfileUpdate() {
-  const before = gameIdentity();
+// before: Kennung des Spiels, das vorher zu sehen war. Getippte Buchstaben bleiben nur im selben Spiel.
+function applyProfileUpdate(before) {
   ensureGames();
-  if (state.mode === 'endless' && state.profile.data.endless.status !== 'playing') startNextEndless();
-  if (gameIdentity() !== before) state.current = [];
+  if (gameIdentity() !== before || currentGame().status !== 'playing') state.current = [];
   if (state.busy) return;
-  renderBoard();
-  renderKeyboardStates();
+  renderAll();
 }
 
 // Holt beim Zurückkehren zur Seite den aktuellen Stand, falls auf einem anderen Gerät gespielt wurde.
@@ -494,17 +577,26 @@ async function refreshFromCloud() {
   if (!remote || state.profile !== profile || state.busy || state.localRevision !== revision || hasPendingSave(profile.id)) {
     return;
   }
-  if (timeValue(remote.updatedAt) <= timeValue(profile.updatedAt)) return;
+  // Jeder andere Serverstand stammt von einem anderen Gerät (Uhren der Geräte können abweichen).
+  if (timeValue(remote.updatedAt) === timeValue(profile.updatedAt)) return;
+  const before = gameIdentity();
   profile.data = remote.data;
   profile.updatedAt = remote.updatedAt;
-  applyProfileUpdate();
+  applyProfileUpdate(before);
 }
 
 // ---------- Spielfeld ----------
 
 function buildBoard() {
+  const rowsCount = maxGuesses();
+  const withHints = state.mode === 'extreme' && extremeVariant() === 'mastermind';
+  const shape = `${rowsCount}:${withHints}`;
+  if (shape === state.boardShape) return;
+  state.boardShape = shape;
+  els.board.style.setProperty('--rows', rowsCount);
+  els.board.classList.toggle('with-hints', withHints);
   const rows = [];
-  for (let r = 0; r < MAX_GUESSES; r++) {
+  for (let r = 0; r < rowsCount; r++) {
     const row = document.createElement('div');
     row.className = 'row';
     row.setAttribute('role', 'row');
@@ -514,13 +606,19 @@ function buildBoard() {
       tile.setAttribute('role', 'gridcell');
       row.append(tile);
     }
+    if (withHints) {
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.setAttribute('role', 'gridcell');
+      row.append(hint);
+    }
     rows.push(row);
   }
   els.board.replaceChildren(...rows);
 }
 
 function rowTiles(index) {
-  return [...els.board.children[index].children];
+  return [...els.board.children[index].querySelectorAll('.tile')];
 }
 
 function setTile(tile, letter, tileState, position) {
@@ -529,27 +627,43 @@ function setTile(tile, letter, tileState, position) {
   if (tileState) tile.dataset.state = tileState;
   else delete tile.dataset.state;
   const label = letter ? `${position}. Buchstabe ${letter}` : `${position}. Buchstabe leer`;
-  tile.setAttribute('aria-label', tileState ? `${label}, ${STATE_LABEL[tileState]}` : label);
+  tile.setAttribute('aria-label', tileState && STATE_LABEL[tileState] ? `${label}, ${STATE_LABEL[tileState]}` : label);
+}
+
+function setHint(rowIndex, counts) {
+  const hint = els.board.children[rowIndex]?.querySelector('.hint');
+  if (!hint) return;
+  if (!counts) {
+    hint.replaceChildren();
+    hint.removeAttribute('aria-label');
+    return;
+  }
+  const badge = (kind, value) => Object.assign(document.createElement('span'), { className: `hint-badge hint-${kind}`, textContent: value });
+  hint.replaceChildren(badge('correct', counts.correct), badge('present', counts.present));
+  hint.setAttribute('aria-label', `${counts.correct} an der richtigen Stelle, ${counts.present} an einer anderen Stelle`);
 }
 
 function renderBoard({ hideStateOfRow = -1 } = {}) {
+  buildBoard();
   const game = currentGame();
-  const answer = currentAnswer();
-  for (let r = 0; r < MAX_GUESSES; r++) {
+  for (let r = 0; r < maxGuesses(); r++) {
     const guess = game.guesses[r];
     const rowLetters = guess ? letters(guess) : r === game.guesses.length ? state.current : [];
-    const result = guess && r !== hideStateOfRow ? evaluateGuess(guess, answer) : null;
+    const feedback = guess && r !== hideStateOfRow ? rowFeedback(game, r) : null;
+    const states = Array.isArray(feedback) ? feedback : feedback ? new Array(WORD_LENGTH).fill('locked') : null;
     rowTiles(r).forEach((tile, c) => {
       tile.classList.remove('flip', 'bounce', 'pop');
-      setTile(tile, rowLetters[c], result?.[c], c + 1);
+      setTile(tile, rowLetters[c], states?.[c], c + 1);
     });
+    setHint(r, feedback && !Array.isArray(feedback) ? feedback : null);
   }
+  state.boardIdentity = gameIdentity();
 }
 
 function renderCurrentRow() {
   const game = currentGame();
   const row = game.guesses.length;
-  if (row >= MAX_GUESSES) return;
+  if (row >= maxGuesses()) return;
   rowTiles(row).forEach((tile, c) => setTile(tile, state.current[c], null, c + 1));
 }
 
@@ -563,20 +677,27 @@ function shakeRow() {
 }
 
 // isCurrent() verhindert, dass ein laufendes Aufdecken auf ein inzwischen anderes Spielfeld malt.
-function revealRow(rowIndex, guess, result, isCurrent) {
+function revealRow(rowIndex, guess, feedback, isCurrent) {
   const tiles = rowTiles(rowIndex);
   const chars = letters(guess);
+  const states = Array.isArray(feedback) ? feedback : new Array(WORD_LENGTH).fill('locked');
   tiles.forEach((tile, i) => {
     setTimeout(() => {
       if (!isCurrent()) return;
       tile.classList.add('flip');
       setTimeout(() => {
-        if (isCurrent()) setTile(tile, chars[i], result[i], i + 1);
+        if (isCurrent()) setTile(tile, chars[i], states[i], i + 1);
       }, FLIP_HALF);
       tile.addEventListener('animationend', () => tile.classList.remove('flip'), { once: true });
     }, i * FLIP_STEP);
   });
-  return new Promise((resolve) => setTimeout(resolve, (tiles.length - 1) * FLIP_STEP + FLIP_HALF * 2 + 30));
+  const duration = (tiles.length - 1) * FLIP_STEP + FLIP_HALF * 2 + 30;
+  return new Promise((resolve) =>
+    setTimeout(() => {
+      if (isCurrent() && !Array.isArray(feedback)) setHint(rowIndex, feedback);
+      resolve();
+    }, duration),
+  );
 }
 
 function bounceRow(rowIndex) {
@@ -619,7 +740,7 @@ function buildKeyboard() {
 
 function renderKeyboardStates() {
   const game = currentGame();
-  const states = keyboardStates(game.guesses, currentAnswer());
+  const states = state.mode === 'extreme' ? extremeKeyboardStates(game) : keyboardStates(game.guesses, game.answer);
   for (const button of els.keyboard.querySelectorAll('.key')) {
     const keyState = states[button.dataset.key];
     if (keyState) {
@@ -660,17 +781,32 @@ function removeLetter() {
   renderCurrentRow();
 }
 
+function praise(rowIndex) {
+  if (rowIndex === maxGuesses() - 1) return 'Puh, knapp!';
+  return PRAISE[Math.min(rowIndex, PRAISE.length - 1)];
+}
+
+function describeFeedback(guess, feedback) {
+  if (!Array.isArray(feedback)) {
+    return `${feedback.correct} an der richtigen Stelle, ${feedback.present} an einer anderen Stelle`;
+  }
+  return letters(guess)
+    .map((ch, i) => `${ch} ${STATE_LABEL[feedback[i]]}`)
+    .join(', ');
+}
+
 async function submitGuess() {
   if (state.busy || state.switching || !state.profile) return;
   const game = currentGame();
   if (game.status !== 'playing') {
-    // Im Endlos-Modus startet Enter nach einer Runde das nächste Wort.
-    if (state.mode === 'endless') nextRound();
+    // Im Endlos- und Extrem-Modus startet Enter nach einer Runde das nächste Wort
+    // (erst wenn das Ergebnis angezeigt wurde).
+    if (state.mode !== 'daily' && !state.statsTimer) nextRound();
     return;
   }
-  const answer = currentAnswer();
   const guess = state.current.join('');
-  const hardMode = Boolean(state.profile.data.settings.hardMode);
+  const extreme = state.mode === 'extreme';
+  const hardMode = !extreme && Boolean(state.profile.data.settings.hardMode);
 
   if (state.current.length < WORD_LENGTH) {
     shakeRow();
@@ -683,7 +819,7 @@ async function submitGuess() {
     return;
   }
   if (hardMode) {
-    const violation = hardModeViolation(guess, game.guesses, answer);
+    const violation = hardModeViolation(guess, game.guesses, game.answer);
     if (violation) {
       shakeRow();
       toast(violation);
@@ -691,23 +827,32 @@ async function submitGuess() {
     }
   }
 
-  // Merkt sich, ob die ganze Runde im schweren Modus gespielt wurde (für das Sternchen beim Teilen).
-  if (game.guesses.length === 0) game.hard = hardMode;
-  else if (!hardMode) game.hard = false;
-
   const rowIndex = game.guesses.length;
-  const result = evaluateGuess(guess, answer);
-  const won = guess === answer;
-  game.guesses.push(guess);
+  let feedback;
+  let won;
+  if (extreme) {
+    ({ feedback, won } = playExtremeGuess(game, guess, SOLUTIONS));
+  } else {
+    // Merkt sich, ob die ganze Runde im schweren Modus gespielt wurde (für das Sternchen beim Teilen).
+    if (game.guesses.length === 0) game.hard = hardMode;
+    else if (!hardMode) game.hard = false;
+    feedback = evaluateGuess(guess, game.answer);
+    won = guess === game.answer;
+    game.guesses.push(guess);
+    if (won) game.status = 'won';
+    else if (game.guesses.length === MAX_GUESSES) game.status = 'lost';
+  }
   state.current = [];
 
-  if (won || game.guesses.length === MAX_GUESSES) {
-    game.status = won ? 'won' : 'lost';
+  if (game.status !== 'playing') {
     const stats = state.profile.data.stats;
     if (state.mode === 'daily') {
       stats.daily = recordDailyResult(stats.daily, game.day, won, game.guesses.length);
-    } else {
+    } else if (state.mode === 'endless') {
       stats.endless = recordEndlessResult(stats.endless, won, game.guesses.length);
+    } else {
+      const variant = extremeVariant();
+      stats.extreme[variant] = recordEndlessResult(stats.extreme[variant], won, game.guesses.length);
     }
   }
 
@@ -717,24 +862,24 @@ async function submitGuess() {
   state.busy = true;
   persist();
   renderBoard({ hideStateOfRow: rowIndex });
-  await revealRow(rowIndex, guess, result, isCurrent);
+  await revealRow(rowIndex, guess, feedback, isCurrent);
   state.busy = false;
   if (state.profile !== profile) return;
   if (!isCurrent()) {
     // Der Spielstand wurde inzwischen mit einem anderen Gerät zusammengeführt.
-    renderBoard();
-    renderKeyboardStates();
+    renderAll();
     return;
   }
   renderKeyboardStates();
-  announce(`Versuch ${rowIndex + 1}: ${letters(guess).map((ch, i) => `${ch} ${STATE_LABEL[result[i]]}`).join(', ')}`);
+  renderCaption();
+  announce(`Versuch ${rowIndex + 1}: ${describeFeedback(guess, feedback)}`);
 
   if (won) {
-    toast(PRAISE[rowIndex], 1800);
+    toast(praise(rowIndex), 1800);
     bounceRow(rowIndex);
     scheduleStats(profile, mode, game, REDUCED_MOTION ? 600 : 1800);
   } else if (game.status === 'lost') {
-    toast(answer, 2600);
+    toast(game.answer, 2600);
     scheduleStats(profile, mode, game, 1800);
   }
 }
@@ -750,12 +895,22 @@ function scheduleStats(profile, mode, game, delay) {
 
 // ---------- Statistik & Teilen ----------
 
+function modeLabel(mode, variant) {
+  if (mode === 'daily') return 'Tagesrätsel';
+  if (mode === 'endless') return 'Endlos';
+  return `${EXTREME_VARIANTS[variant].emoji} ${EXTREME_VARIANTS[variant].label}`;
+}
+
 function shareText() {
-  const { game, mode } = state.statsView;
+  const { game, mode, variant } = state.statsView;
   const score = game.status === 'won' ? game.guesses.length : 'X';
+  const url = `${location.origin}${location.pathname}`;
+  if (mode === 'extreme') {
+    const { maxGuesses: max } = EXTREME_VARIANTS[variant];
+    return `Wordle Deutsch Extrem ${modeLabel(mode, variant)} ${score}/${max}\n\n${extremeShareGrid(game)}\n\n${url}`;
+  }
   const hard = game.hard ? '*' : '';
   const title = mode === 'daily' ? `Wordle Deutsch #${puzzleNumber(game.day)}` : 'Wordle Deutsch (Endlos)';
-  const url = `${location.origin}${location.pathname}`;
   return `${title} ${score}/6${hard}\n\n${shareGrid(game.guesses, game.answer)}\n\n${url}`;
 }
 
@@ -819,11 +974,12 @@ function showStats({ fromGameEnd = false } = {}) {
   if (fromGameEnd && document.querySelector('dialog[open]')) return;
   const game = currentGame();
   const mode = state.mode;
-  const stats = state.profile.data.stats[mode];
+  const variant = mode === 'extreme' ? extremeVariant() : null;
+  const stats = currentStats();
   const finished = game.status !== 'playing';
-  state.statsView = finished ? { game, mode } : null;
+  state.statsView = finished ? { game, mode, variant } : null;
 
-  $('stats-mode').textContent = mode === 'daily' ? '· Tagesrätsel' : '· Endlos';
+  $('stats-mode').textContent = `· ${modeLabel(mode, variant)}`;
   $('stat-played').textContent = stats.played;
   $('stat-winrate').textContent = stats.played ? Math.round((stats.won / stats.played) * 100) : 0;
   $('stat-streak').textContent = mode === 'daily' ? currentDailyStreak(stats, state.today) : stats.streak;
@@ -849,7 +1005,12 @@ function showStats({ fromGameEnd = false } = {}) {
   stopCountdown();
   if (finished) {
     $('result-title').textContent = game.status === 'won' ? 'Gewonnen!' : 'Leider verloren';
-    $('result-word').replaceChildren('Das Wort war: ', Object.assign(document.createElement('strong'), { textContent: game.answer }));
+    const word = Object.assign(document.createElement('strong'), { textContent: game.answer });
+    if (variant === 'devil' && game.status === 'lost' && game.remainingAtEnd > 1) {
+      $('result-word').replaceChildren('Möglich gewesen wäre z. B. ', word, ` (noch ${game.remainingAtEnd} Wörter)`);
+    } else {
+      $('result-word').replaceChildren('Das Wort war: ', word);
+    }
     $('next-button').textContent = mode === 'daily' ? 'Endlos spielen' : 'Nächstes Wort';
     $('countdown').hidden = mode !== 'daily';
     if (mode === 'daily') {
@@ -863,8 +1024,16 @@ function showStats({ fromGameEnd = false } = {}) {
 function nextRound() {
   if (state.busy || !state.profile) return;
   if (els.statsDialog.open) els.statsDialog.close();
-  // setMode startet im Endlos-Modus automatisch ein neues Wort, wenn das letzte beendet ist.
-  setMode('endless');
+  // setMode startet im Endlos- und Extrem-Modus automatisch ein neues Wort, wenn das letzte beendet ist.
+  setMode(state.mode === 'daily' ? 'endless' : state.mode);
+}
+
+function selectVariant(variant) {
+  if (state.busy || state.switching || !state.profile || !EXTREME_VARIANTS[variant]) return;
+  if (state.mode === 'extreme' && variant === extremeVariant()) return;
+  state.profile.data.settings.extremeVariant = variant;
+  setMode('extreme');
+  persist();
 }
 
 // ---------- Einstellungen ----------
@@ -941,9 +1110,12 @@ function bindEvents() {
       if (state.busy || state.switching || !state.profile) return;
       const mode = tab.dataset.mode;
       if (mode !== state.mode) setMode(mode);
-      // Nochmal auf "Endlos" tippen startet nach einer beendeten Runde das nächste Wort.
-      else if (mode === 'endless' && currentGame().status !== 'playing') setMode('endless');
+      // Nochmal auf den Reiter tippen startet nach einer beendeten Runde das nächste Wort.
+      else if (mode !== 'daily' && currentGame().status !== 'playing' && !state.statsTimer) setMode(mode);
     });
+  }
+  for (const chip of document.querySelectorAll('.variant-chip')) {
+    chip.addEventListener('click', () => selectVariant(chip.dataset.variant));
   }
 
   els.keyboard.addEventListener('click', (event) => {
@@ -972,7 +1144,8 @@ function bindEvents() {
     if (event.key === 'Enter') {
       if (onOtherControl) return;
       event.preventDefault();
-      submitGuess();
+      // Gedrückt gehaltenes Enter nicht wiederholen (würde sonst das Ergebnis überspringen).
+      if (!event.repeat) submitGuess();
     } else if (event.key === 'Backspace') {
       event.preventDefault();
       removeLetter();
@@ -1043,13 +1216,12 @@ function bindEvents() {
     if (state.profile && hasPendingSave(state.profile.id)) flushPending(state.profile.id, state.profile).catch(() => null);
   }, 30_000);
 
-  onConflictMerged((profile) => {
-    if (profile === state.profile) applyProfileUpdate();
+  onConflictMerged((profile, previousData) => {
+    if (profile === state.profile) applyProfileUpdate(gameIdentity(previousData));
   });
 }
 
 function init() {
-  buildBoard();
   buildKeyboard();
   bindEvents();
   syncThemeColor();

@@ -65,16 +65,22 @@ export function hardModeViolation(guess, previousGuesses, answer) {
 const STATE_RANK = { absent: 1, present: 2, correct: 3 };
 
 // Bester bekannter Zustand je Buchstabe, für die Bildschirmtastatur.
-export function keyboardStates(guesses, answer) {
+// rows: pro Versuch die angezeigten Zustände.
+export function keyboardStatesFromRows(guesses, rows) {
   const states = {};
-  for (const guess of guesses) {
-    const result = evaluateGuess(guess, answer);
+  guesses.forEach((guess, r) => {
+    const result = rows[r];
+    if (!Array.isArray(result)) return;
     letters(guess).forEach((letter, i) => {
       const current = states[letter];
       if (!current || STATE_RANK[result[i]] > STATE_RANK[current]) states[letter] = result[i];
     });
-  }
+  });
   return states;
+}
+
+export function keyboardStates(guesses, answer) {
+  return keyboardStatesFromRows(guesses, guesses.map((guess) => evaluateGuess(guess, answer)));
 }
 
 // Kalendertag in Deutschland als "JJJJ-MM-TT", damit alle um Mitternacht (MEZ/MESZ) ein neues Wort bekommen.
@@ -110,17 +116,17 @@ export function dailyAnswer(dayKey, solutions) {
   return solutions[((n % solutions.length) + solutions.length) % solutions.length];
 }
 
-export function randomAnswer(solutions, exclude) {
+export function randomAnswer(solutions, exclude, random = Math.random) {
   if (solutions.length < 2) return solutions[0];
   let word;
   do {
-    word = solutions[Math.floor(Math.random() * solutions.length)];
+    word = solutions[Math.floor(random() * solutions.length)];
   } while (word === exclude);
   return word;
 }
 
-export function emptyStats() {
-  return { played: 0, won: 0, streak: 0, maxStreak: 0, dist: [0, 0, 0, 0, 0, 0], lastWonDay: null };
+export function emptyStats(maxGuesses = MAX_GUESSES) {
+  return { played: 0, won: 0, streak: 0, maxStreak: 0, dist: new Array(maxGuesses).fill(0), lastWonDay: null };
 }
 
 // Tagesrätsel: Serie zählt aufeinanderfolgende gewonnene Tage.
@@ -139,9 +145,10 @@ export function recordDailyResult(stats, dayKey, won, guessCount) {
   return next;
 }
 
-// Endlos-Modus: Serie zählt aufeinanderfolgende gewonnene Runden.
+// Endlos- und Extrem-Modus: Serie zählt aufeinanderfolgende gewonnene Runden.
 export function recordEndlessResult(stats, won, guessCount) {
   const next = { ...emptyStats(), ...stats, dist: [...(stats?.dist || emptyStats().dist)] };
+  while (next.dist.length < guessCount) next.dist.push(0);
   next.played += 1;
   if (won) {
     next.won += 1;
@@ -161,13 +168,201 @@ export function currentDailyStreak(stats, todayKey) {
   return 0;
 }
 
+// ---------- Extrem-Modi ----------
+
+export const EXTREME_VARIANTS = {
+  devil: {
+    label: 'Teufel',
+    emoji: '😈',
+    maxGuesses: 8,
+    caption: 'Das Wort weicht dir aus und legt sich erst fest, wenn nur noch eins passt.',
+  },
+  liar: {
+    label: 'Lügner',
+    emoji: '🤥',
+    maxGuesses: 8,
+    caption: 'In jeder Reihe zeigt genau eine Kachel die falsche Farbe.',
+  },
+  blind: {
+    label: 'Blind',
+    emoji: '🙈',
+    maxGuesses: 6,
+    caption: 'Kein Gelb und keine Farben auf der Tastatur – merk dir alles selbst.',
+  },
+  mastermind: {
+    label: 'Mastermind',
+    emoji: '🎯',
+    maxGuesses: 8,
+    caption: 'Nur die Anzahl: 🟩 an der richtigen Stelle, 🟨 an einer anderen Stelle.',
+  },
+};
+
+export const EXTREME_KEYS = Object.keys(EXTREME_VARIANTS);
+
+const STATE_KEY = { correct: 'c', present: 'p', absent: 'a' };
+
+function patternKey(states) {
+  return states.map((s) => STATE_KEY[s]).join('');
+}
+
+function patternScore(states) {
+  return states.reduce((sum, s) => sum + (s === 'correct' ? 2 : s === 'present' ? 1 : 0), 0);
+}
+
+function randomId(random) {
+  return Math.floor(random() * 2 ** 48).toString(36);
+}
+
+export function newExtremeGame(variant, solutions, random = Math.random) {
+  return {
+    id: randomId(random),
+    variant,
+    // Der Teufel legt sich erst am Ende fest.
+    answer: variant === 'devil' ? null : randomAnswer(solutions, null, random),
+    guesses: [],
+    feedback: [],
+    status: 'playing',
+  };
+}
+
+// Teufel: alle Lösungswörter, die zu den bisher gezeigten Farben passen.
+export function devilCandidates(game, solutions) {
+  return solutions.filter((word) =>
+    game.guesses.every((guess, i) => patternKey(evaluateGuess(guess, word)) === patternKey(game.feedback[i])),
+  );
+}
+
+// Teufel: Antwortet mit dem Farbmuster, nach dem die meisten Wörter übrig bleiben.
+// Bei Gleichstand das Muster mit weniger Grün und Gelb, damit der Sieg so spät wie möglich kommt.
+export function devilRespond(guess, candidates) {
+  const groups = new Map();
+  for (const word of candidates) {
+    const states = evaluateGuess(guess, word);
+    const key = patternKey(states);
+    if (!groups.has(key)) groups.set(key, { states, words: [] });
+    groups.get(key).words.push(word);
+  }
+  let best = null;
+  for (const [key, group] of groups) {
+    if (
+      !best ||
+      group.words.length > best.group.words.length ||
+      (group.words.length === best.group.words.length &&
+        (patternScore(group.states) < patternScore(best.group.states) ||
+          (patternScore(group.states) === patternScore(best.group.states) && key < best.key)))
+    ) {
+      best = { key, group };
+    }
+  }
+  return { states: best.group.states, remaining: best.group.words };
+}
+
+// Lügner: genau eine Kachel bekommt eine falsche Farbe – aber nie so, dass alles grün aussieht.
+export function liarFeedback(truth, random = Math.random) {
+  const options = [];
+  truth.forEach((state, pos) => {
+    for (const other of ['correct', 'present', 'absent']) {
+      if (other === state) continue;
+      const shown = [...truth];
+      shown[pos] = other;
+      if (!shown.every((s) => s === 'correct')) options.push(shown);
+    }
+  });
+  return options[Math.floor(random() * options.length)];
+}
+
+export function mastermindCounts(guess, answer) {
+  const states = evaluateGuess(guess, answer);
+  return {
+    correct: states.filter((s) => s === 'correct').length,
+    present: states.filter((s) => s === 'present').length,
+  };
+}
+
+// Spielt einen Versuch im Extrem-Modus und speichert die angezeigte Rückmeldung im Spiel.
+export function playExtremeGuess(game, guess, solutions, random = Math.random) {
+  const { maxGuesses } = EXTREME_VARIANTS[game.variant];
+  let feedback;
+  let won;
+  let remaining = null;
+
+  if (game.variant === 'devil') {
+    let candidates = devilCandidates(game, solutions);
+    // Sollte die Wortliste sich geändert haben, notfalls neu anfangen statt abzustürzen.
+    if (candidates.length === 0) candidates = solutions;
+    ({ states: feedback, remaining } = devilRespond(guess, candidates));
+    won = feedback.every((s) => s === 'correct');
+  } else {
+    const truth = evaluateGuess(guess, game.answer);
+    won = guess === game.answer;
+    if (game.variant === 'blind') feedback = truth.map((s) => (s === 'present' ? 'absent' : s));
+    else if (game.variant === 'liar') feedback = won ? truth : liarFeedback(truth, random);
+    else feedback = mastermindCounts(guess, game.answer);
+  }
+
+  game.guesses.push(guess);
+  game.feedback.push(feedback);
+  if (won) {
+    game.status = 'won';
+    if (game.variant === 'devil') game.answer = guess;
+  } else if (game.guesses.length >= maxGuesses) {
+    game.status = 'lost';
+    if (game.variant === 'devil') {
+      game.answer = remaining[0];
+      game.remainingAtEnd = remaining.length;
+    }
+  }
+  return { feedback, won };
+}
+
+// Tastaturfarben gibt es im Extrem-Modus nur beim Teufel (dort sind die Farben ehrlich).
+export function extremeKeyboardStates(game) {
+  if (game.variant !== 'devil') return {};
+  return keyboardStatesFromRows(game.guesses, game.feedback);
+}
+
+export function extremeShareGrid(game) {
+  return game.feedback
+    .map((fb) =>
+      Array.isArray(fb) ? fb.map((s) => SHARE_EMOJI[s]).join('') : `🟩 ${fb.correct}  🟨 ${fb.present}`,
+    )
+    .join('\n');
+}
+
+export function emptyExtremeStats() {
+  return Object.fromEntries(EXTREME_KEYS.map((key) => [key, emptyStats(EXTREME_VARIANTS[key].maxGuesses)]));
+}
+
+// ---------- Profildaten ----------
+
 export function emptyProfileData() {
   return {
     version: 1,
     daily: null,
     endless: null,
-    stats: { daily: emptyStats(), endless: emptyStats() },
-    settings: { hardMode: false },
+    extreme: {},
+    stats: { daily: emptyStats(), endless: emptyStats(), extreme: emptyExtremeStats() },
+    settings: { hardMode: false, extremeVariant: 'devil' },
+  };
+}
+
+function normalizeExtremeGame(game, variant) {
+  if (!game || typeof game !== 'object' || game.variant !== variant) return null;
+  if (!Array.isArray(game.guesses) || !Array.isArray(game.feedback)) return null;
+  const { maxGuesses } = EXTREME_VARIANTS[variant];
+  const count = Math.min(game.guesses.length, game.feedback.length, maxGuesses);
+  const answer = typeof game.answer === 'string' ? game.answer : null;
+  if (variant !== 'devil' && !answer) return null;
+  const status = ['playing', 'won', 'lost'].includes(game.status) ? game.status : 'playing';
+  // Ein beendeter Teufel braucht sein Lösungswort.
+  if (variant === 'devil' && status !== 'playing' && !answer) return null;
+  return {
+    ...game,
+    id: typeof game.id === 'string' ? game.id : String(game.id ?? ''),
+    answer,
+    guesses: game.guesses.slice(0, count).map(String),
+    feedback: game.feedback.slice(0, count),
+    status,
   };
 }
 
@@ -182,9 +377,9 @@ function normalizeGame(game, keyField) {
   };
 }
 
-function normalizeStats(stats) {
-  const next = { ...emptyStats(), ...(stats && typeof stats === 'object' ? stats : {}) };
-  if (!Array.isArray(next.dist) || next.dist.length !== MAX_GUESSES) next.dist = emptyStats().dist;
+function normalizeStats(stats, maxGuesses = MAX_GUESSES) {
+  const next = { ...emptyStats(maxGuesses), ...(stats && typeof stats === 'object' ? stats : {}) };
+  if (!Array.isArray(next.dist) || next.dist.length !== maxGuesses) next.dist = emptyStats(maxGuesses).dist;
   return next;
 }
 
@@ -192,22 +387,30 @@ function normalizeStats(stats) {
 export function normalizeProfileData(data) {
   const base = emptyProfileData();
   if (!data || typeof data !== 'object') return base;
+  const settings = { ...base.settings, ...(data.settings || {}) };
+  if (!EXTREME_KEYS.includes(settings.extremeVariant)) settings.extremeVariant = 'devil';
   return {
     ...base,
     ...data,
     daily: normalizeGame(data.daily, 'day'),
     endless: normalizeGame(data.endless, 'answer'),
+    extreme: Object.fromEntries(
+      EXTREME_KEYS.map((key) => [key, normalizeExtremeGame(data.extreme?.[key], key)]).filter(([, game]) => game),
+    ),
     stats: {
       daily: normalizeStats(data.stats?.daily),
       endless: normalizeStats(data.stats?.endless),
+      extreme: Object.fromEntries(
+        EXTREME_KEYS.map((key) => [key, normalizeStats(data.stats?.extreme?.[key], EXTREME_VARIANTS[key].maxGuesses)]),
+      ),
     },
-    settings: { ...base.settings, ...(data.settings || {}) },
+    settings,
   };
 }
 
 function progress(game) {
   if (!game) return -1;
-  return game.guesses.length + (game.status === 'playing' ? 0 : MAX_GUESSES + 1);
+  return game.guesses.length + (game.status === 'playing' ? 0 : 100);
 }
 
 function pickDaily(remote, local) {
@@ -219,6 +422,13 @@ function pickDaily(remote, local) {
 function pickEndless(remote, local) {
   if (!remote || !local) return local || remote;
   if (remote.answer === local.answer) return progress(local) >= progress(remote) ? local : remote;
+  const active = (game) => game.status === 'playing' && game.guesses.length > 0;
+  return active(remote) && !active(local) ? remote : local;
+}
+
+function pickExtreme(remote, local) {
+  if (!remote || !local) return local || remote;
+  if (remote.id === local.id) return progress(local) >= progress(remote) ? local : remote;
   const active = (game) => game.status === 'playing' && game.guesses.length > 0;
   return active(remote) && !active(local) ? remote : local;
 }
@@ -238,9 +448,15 @@ export function mergeProfileData(remoteData, localData) {
     ...local,
     daily: pickDaily(remote.daily, local.daily),
     endless: pickEndless(remote.endless, local.endless),
+    extreme: Object.fromEntries(
+      EXTREME_KEYS.map((key) => [key, pickExtreme(remote.extreme[key], local.extreme[key])]).filter(([, game]) => game),
+    ),
     stats: {
       daily: pickStats(remote.stats.daily, local.stats.daily),
       endless: pickStats(remote.stats.endless, local.stats.endless),
+      extreme: Object.fromEntries(
+        EXTREME_KEYS.map((key) => [key, pickStats(remote.stats.extreme[key], local.stats.extreme[key])]),
+      ),
     },
     settings: local.settings,
   };

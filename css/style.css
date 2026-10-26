@@ -11,6 +11,7 @@
   --correct: #6aaa64;
   --present: #c9b458;
   --absent: #787c7e;
+  --locked: #e3e4e6;
   --on-color: #ffffff;
   --toast-bg: #1a1a1b;
   --toast-text: #ffffff;
@@ -36,6 +37,7 @@
     --correct: #538d4e;
     --present: #b59f3b;
     --absent: #3a3a3c;
+    --locked: #2c2c2e;
     --toast-bg: #f8f8f8;
     --toast-text: #121213;
     --backdrop: rgba(0, 0, 0, 0.6);
@@ -57,6 +59,7 @@
   --correct: #538d4e;
   --present: #b59f3b;
   --absent: #3a3a3c;
+  --locked: #2c2c2e;
   --toast-bg: #f8f8f8;
   --toast-text: #121213;
   --backdrop: rgba(0, 0, 0, 0.6);
@@ -436,6 +439,53 @@ button {
   color: var(--bg);
 }
 
+.variant-bar {
+  padding: 8px 12px 0;
+  text-align: center;
+}
+
+.variant-chips {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.variant-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 3px 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.variant-chip span {
+  font-size: 1.05rem;
+}
+
+.variant-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.variant-caption {
+  min-height: 1.3em;
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.3;
+}
+
 .game-main {
   position: relative;
   flex: 1;
@@ -447,11 +497,17 @@ button {
 }
 
 .board {
+  --rows: 6;
+  --cols: 5;
   display: grid;
-  grid-template-rows: repeat(6, minmax(0, 1fr));
+  grid-template-rows: repeat(var(--rows), minmax(0, 1fr));
   gap: 5px;
-  width: min(350px, 100cqw, (100cqh - 4px) * 5 / 6);
-  aspect-ratio: 5 / 6;
+  width: min(calc(70px * var(--cols)), 100cqw, calc((100cqh - 4px) * var(--cols) / var(--rows)));
+  aspect-ratio: var(--cols) / var(--rows);
+}
+
+.board.with-hints {
+  --cols: 6.6;
 }
 
 .row {
@@ -460,6 +516,35 @@ button {
   gap: 5px;
   min-height: 0;
 }
+
+.board.with-hints .row {
+  grid-template-columns: repeat(5, 1fr) 1.6fr;
+}
+
+/* Mastermind: Anzahl richtiger und verschobener Buchstaben neben der Reihe. */
+.hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.hint-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 0;
+  flex: 1;
+  height: 70%;
+  border-radius: 6px;
+  color: var(--on-color);
+  font-weight: 700;
+  font-size: clamp(0.75rem, 5cqmin, 1.2rem);
+  animation: pop 0.2s ease-in-out;
+}
+
+.hint-correct { background: var(--correct); }
+.hint-present { background: var(--present); }
 
 .tile {
   display: inline-grid;
@@ -491,6 +576,12 @@ button {
 .tile[data-state="correct"] { background: var(--correct); }
 .tile[data-state="present"] { background: var(--present); }
 .tile[data-state="absent"] { background: var(--absent); }
+
+/* Mastermind: abgeschickte Reihe ohne Farbhinweis. */
+.tile[data-state="locked"] {
+  background: var(--locked);
+  color: var(--text);
+}
 
 .tile.pop {
   animation: pop 0.1s ease-in-out;
@@ -575,6 +666,22 @@ button {
 
 .toast.is-hiding {
   opacity: 0;
+}
+
+/* Bleibt oben im sichtbaren Bereich, auch wenn ein Dialog gescrollt wird. */
+.dialog-toasts {
+  position: sticky;
+  top: 8px;
+  left: auto;
+  right: auto;
+  height: 0;
+  margin: 0 16px;
+  overflow: visible;
+}
+
+.profile-toasts {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
 }
 
 /* ---------- Tastatur ---------- */
@@ -898,10 +1005,11 @@ button {
   #game-screen {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
-    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto auto minmax(0, 1fr);
     grid-template-areas:
       "header header"
       "tabs keyboard"
+      "variants keyboard"
       "main keyboard";
     max-width: 960px;
   }
@@ -918,6 +1026,15 @@ button {
 
   .mode-tab {
     min-height: 30px;
+  }
+
+  .variant-bar {
+    grid-area: variants;
+    padding-top: 4px;
+  }
+
+  .variant-caption {
+    display: none;
   }
 
   .game-main {
