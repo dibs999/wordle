@@ -24,7 +24,11 @@ import {
   mergeProfileData,
   countsSnapshot,
   reuseUnchangedGames,
+  dailyRanking,
+  streakRanking,
+  formatDuration,
 } from './game.js';
+import { burstConfetti } from './fx.js';
 import {
   isCloud,
   listProfiles,
@@ -87,6 +91,10 @@ const els = {
   settingsDialog: $('settings-dialog'),
   highContrast: $('high-contrast'),
   soundToggle: $('sound-toggle'),
+  rankingButton: $('ranking-button'),
+  rankingDialog: $('ranking-dialog'),
+  rankingDaily: $('ranking-daily'),
+  rankingStreak: $('ranking-streak'),
   themeSelect: $('theme-select'),
 };
 
@@ -869,6 +877,7 @@ async function submitGuess() {
   }
 
   const rowIndex = game.guesses.length;
+  const firstGuess = rowIndex === 0;
   let feedback;
   let won;
   if (state.mode === 'extreme') {
@@ -881,6 +890,9 @@ async function submitGuess() {
     else if (game.guesses.length === MAX_GUESSES) game.status = 'lost';
   }
   state.current = [];
+  // Zeiten für die Rangliste: vom ersten Versuch bis zum Ende der Runde.
+  if (firstGuess) game.startedAt = Date.now();
+  if (game.status !== 'playing') game.finishedAt = Date.now();
 
   if (game.status !== 'playing') {
     const stats = state.profile.data.stats;
@@ -917,6 +929,7 @@ async function submitGuess() {
     toast(praise(rowIndex), 1800);
     bounceRow(rowIndex);
     playWin();
+    burstConfetti();
     scheduleStats(profile, mode, game, REDUCED_MOTION ? 600 : 1800);
   } else if (game.status === 'lost') {
     toast(game.answer, 2600);
@@ -1059,6 +1072,8 @@ function showStats({ fromGameEnd = false } = {}) {
       }),
     );
     $('result-title').textContent = won ? 'Gewonnen! 🎉' : 'Leider verloren 😅';
+    // Das Wort im Duden nachschlagen (nur das Lösungswort wird übertragen, sonst nichts).
+    $('duden-link').href = `https://www.duden.de/suchen/dudenonline/${encodeURIComponent(game.answer.toLocaleLowerCase('de'))}`;
     const word = Object.assign(document.createElement('strong'), { textContent: game.answer });
     if (variant === 'devil' && game.status === 'lost' && game.remainingAtEnd > 1) {
       $('result-word').replaceChildren('Möglich gewesen wäre z. B. ', word, ` (noch ${game.remainingAtEnd} Wörter)`);
@@ -1072,6 +1087,38 @@ function showStats({ fromGameEnd = false } = {}) {
     }
   }
   openDialog(els.statsDialog);
+}
+
+// Rangliste: wer hat heute schon gelöst und wer hat die längste Serie. Stand aus den geladenen Profilen.
+function renderRanking() {
+  const describe = (row) => {
+    if (row.tier === 0) return `✓ ${row.guesses}/6${row.ms != null ? ` · ${formatDuration(row.ms)}` : ''}`;
+    if (row.tier === 1) return '✗ verloren';
+    if (row.tier === 2) return `läuft · ${row.guesses}/6`;
+    return 'noch offen';
+  };
+  const entry = (name, value) => {
+    const li = document.createElement('li');
+    const nameEl = Object.assign(document.createElement('span'), { className: 'ranking-name', textContent: name });
+    const valueEl = Object.assign(document.createElement('span'), { className: 'ranking-value', textContent: value });
+    li.append(nameEl, valueEl);
+    return li;
+  };
+  els.rankingDaily.replaceChildren(
+    ...dailyRanking(state.profiles, state.today).map((row) => entry(row.name, describe(row))),
+  );
+  els.rankingStreak.replaceChildren(
+    ...streakRanking(state.profiles, state.today).map((row) => entry(row.name, row.streak ? `🔥 ${row.streak}` : '–')),
+  );
+}
+
+function openRanking() {
+  renderRanking();
+  openDialog(els.rankingDialog);
+  // Im Hintergrund auffrischen, damit auch Ergebnisse von anderen Geräten erscheinen.
+  if (isCloud) loadProfiles({ quiet: true }).then(() => {
+    if (els.rankingDialog.open) renderRanking();
+  });
 }
 
 function nextRound() {
@@ -1124,6 +1171,7 @@ function bindEvents() {
     if (button && !button.disabled) importProfile(button);
   });
 
+  els.rankingButton.addEventListener('click', openRanking);
   els.newProfileButton.addEventListener('click', () => {
     els.newProfileForm.reset();
     els.newProfileError.textContent = '';

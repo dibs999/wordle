@@ -43,6 +43,9 @@
     </header>
     <p id="profile-status" class="profile-status" role="status"></p>
     <ul id="profile-list" class="profile-list" aria-label="Profile"></ul>
+    <button id="ranking-button" class="button button-secondary" type="button">
+      <span aria-hidden="true">🏆</span> Rangliste
+    </button>
     <button id="new-profile-button" class="button button-add" type="button">
       <span class="plus" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
       <span>Neues Profil</span>
@@ -172,6 +175,7 @@
         <div id="result-tiles" class="win-tiles" aria-hidden="true"></div>
         <h2 id="result-title" class="result-title"></h2>
         <p id="result-word" class="result-word"></p>
+        <a id="duden-link" class="duden-link" href="#" target="_blank" rel="noopener">Im Duden nachschlagen ↗</a>
         <div class="result-actions">
           <button id="share-button" class="button" type="button">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v11M7.5 8 12 3.5 16.5 8"/><path d="M5 13v5.5A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V13"/></svg>
@@ -196,6 +200,20 @@
       <h3>Verteilung der Versuche</h3>
       <ol id="distribution" class="distribution"></ol>
       <p id="countdown" class="countdown" hidden></p>
+    </div>
+  </dialog>
+
+  <!-- Rangliste -->
+  <dialog id="ranking-dialog" class="dialog" aria-labelledby="ranking-title">
+    <div class="toasts dialog-toasts" role="status" aria-live="polite"></div>
+    <div class="dialog-body">
+      <div class="grabber" aria-hidden="true"></div>
+      <button class="dialog-close" type="button" data-close aria-label="Schließen"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      <h2 id="ranking-title">Rangliste</h2>
+      <h3>Tagesrätsel heute</h3>
+      <ol id="ranking-daily" class="ranking-list"></ol>
+      <h3>Tagesserien</h3>
+      <ol id="ranking-streak" class="ranking-list"></ol>
     </div>
   </dialog>
 

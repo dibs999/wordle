@@ -1030,6 +1030,90 @@ button {
   border: 0;
 }
 
+/* ---------- Rangliste und Duden-Link ---------- */
+
+.ranking-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ranking-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: var(--surface-soft);
+  border: 2px solid var(--line);
+}
+
+.ranking-name {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranking-value {
+  flex: none;
+  color: var(--muted);
+  font-weight: 800;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.duden-link {
+  display: inline-block;
+  margin-top: 10px;
+  color: var(--accent);
+  font-weight: 800;
+  font-size: 15px;
+  text-decoration: none;
+}
+
+.duden-link:hover {
+  text-decoration: underline;
+}
+
+/* ---------- Konfetti (bei einem Sieg) ---------- */
+
+.confetti-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.confetti-piece {
+  position: absolute;
+  top: -20px;
+  width: 10px;
+  height: 14px;
+  border-radius: 3px;
+  animation-name: confetti-fall;
+  animation-timing-function: cubic-bezier(0.2, 0.6, 0.4, 1);
+  animation-fill-mode: forwards;
+}
+
+@keyframes confetti-fall {
+  from {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  to {
+    transform: translate(var(--drift), 110vh) rotate(var(--spin));
+    opacity: 0.6;
+  }
+}
+
 /* ---------- Tastatur ---------- */
 
 .keyboard {

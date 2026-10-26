@@ -526,6 +526,44 @@ export function mergeProfileData(remoteData, localData, baseCounts = null) {
   };
 }
 
+// Dauer vom ersten Versuch bis zum Ende einer Runde in Millisekunden (null, wenn nicht bekannt).
+export function durationMs(game) {
+  if (!game?.startedAt || !game?.finishedAt) return null;
+  return game.finishedAt - game.startedAt;
+}
+
+export function formatDuration(ms) {
+  if (ms == null) return '';
+  const seconds = Math.round(ms / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+// Rangliste für ein Tagesrätsel: gewonnen (wenigste Versuche, dann schnellste zuerst),
+// danach verloren, laufend und zuletzt die, die heute noch nicht angefangen haben.
+export function dailyRanking(profiles, day) {
+  const rows = profiles.map(({ name, data }) => {
+    const game = data.daily;
+    if (!game || game.day !== day) return { name, tier: 3, guesses: 0, ms: null };
+    if (game.status === 'won') return { name, tier: 0, guesses: game.guesses.length, ms: durationMs(game) };
+    if (game.status === 'lost') return { name, tier: 1, guesses: game.guesses.length, ms: null };
+    return { name, tier: game.guesses.length ? 2 : 3, guesses: game.guesses.length, ms: null };
+  });
+  return rows.sort(
+    (a, b) =>
+      a.tier - b.tier ||
+      a.guesses - b.guesses ||
+      (a.ms ?? Number.MAX_SAFE_INTEGER) - (b.ms ?? Number.MAX_SAFE_INTEGER) ||
+      a.name.localeCompare(b.name, 'de'),
+  );
+}
+
+// Rangliste der aktuellen Tagesserien, längste zuerst.
+export function streakRanking(profiles, today) {
+  return profiles
+    .map(({ name, data }) => ({ name, streak: currentDailyStreak(data.stats.daily, today) }))
+    .sort((a, b) => b.streak - a.streak || a.name.localeCompare(b.name, 'de'));
+}
+
 export const SHARE_EMOJI = { correct: '🟩', present: '🟨', absent: '⬛' };
 
 export function shareGrid(guesses, answer) {
