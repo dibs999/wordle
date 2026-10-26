@@ -1,7 +1,7 @@
 // Speichert Profile in Supabase (geräteübergreifend) oder, ohne Konfiguration, im localStorage dieses Browsers.
 
 import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
-import { normalizeProfileData, mergeProfileData } from './game.js';
+import { normalizeProfileData, mergeProfileData, countsSnapshot, reuseUnchangedGames } from './game.js';
 
 // Nur der Teil bis ".supabase.co" zählt, auch wenn "/rest/v1/" mitkopiert wurde.
 const BASE_URL = String(SUPABASE_URL || '').trim().replace(/\/+$/, '').replace(/\/rest\/v1$/, '');
@@ -15,8 +15,9 @@ const NAME_MAX = 20;
 const REQUEST_TIMEOUT_MS = 15_000;
 const SELECT = 'select=id,name,data,updated_at';
 
-// Noch nicht hochgeladene Spielstände: { data, base }, wobei base der Serverstand (updated_at) ist,
-// auf dem die Daten aufbauen. Zusätzlich im Speicher, falls localStorage nicht verfügbar ist.
+// Noch nicht hochgeladene Spielstände: { data, base, baseCounts }. base ist der Serverstand (updated_at),
+// auf dem die Daten aufbauen, baseCounts dessen Statistik (zum Zusammenführen per Zuwachs).
+// Zusätzlich im Speicher, falls localStorage nicht verfügbar ist.
 const memoryPending = new Map();
 const inflight = new Map();
 let conflictHandler = null;
@@ -54,12 +55,15 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+// syncedCounts: Statistik des Serverstands updatedAt, auf dem profile.data aufbaut.
 function toProfile(row) {
+  const data = normalizeProfileData(row.data);
   return {
     id: row.id,
     name: row.name,
-    data: normalizeProfileData(row.data),
+    data,
     updatedAt: row.updated_at || null,
+    syncedCounts: countsSnapshot(data),
   };
 }
 
@@ -83,17 +87,18 @@ export function setActiveProfile(profile) {
   activeProfile = profile;
 }
 
-// Übernimmt zusammengeführte Daten, behält aber unveränderte Spiele als dieselben Objekte,
-// damit ein laufendes Aufdecken nicht unterbrochen wird.
-function keepUnchangedGames(live, merged) {
-  const same = (a, b) => a && b && JSON.stringify(a) === JSON.stringify(b);
-  const result = { ...merged, extreme: { ...merged.extreme } };
-  if (same(live.daily, merged.daily)) result.daily = live.daily;
-  if (same(live.endless, merged.endless)) result.endless = live.endless;
-  for (const key of Object.keys(result.extreme)) {
-    if (same(live.extreme?.[key], result.extreme[key])) result.extreme[key] = live.extreme[key];
-  }
-  return result;
+// Das Profilobjekt, das ein Speicherergebnis betrifft: erst beim Anwenden bestimmt, weil das Profil
+// während des Speicherns ausgewählt worden sein kann.
+function liveProfile(id, profile) {
+  return profile || (activeProfile?.id === id ? activeProfile : null);
+}
+
+function adoptData(live, data, updatedAt, syncedCounts) {
+  const previousData = live.data;
+  live.data = reuseUnchangedGames(previousData, data);
+  live.updatedAt = updatedAt;
+  live.syncedCounts = syncedCounts;
+  conflictHandler?.(live, previousData);
 }
 
 // --- Supabase (REST, ohne Zusatzbibliothek) ---
@@ -146,7 +151,8 @@ function readPending(id) {
   const raw = readLocal(PENDING_PREFIX + id, null);
   if (!raw) return null;
   // Ältere Version hat nur die Daten ohne Serverstand gespeichert.
-  return 'data' in raw && 'base' in raw ? raw : { data: raw, base: null };
+  if (!('data' in raw && 'base' in raw)) return { data: raw, base: null, baseCounts: null };
+  return { baseCounts: null, ...raw };
 }
 
 function writePending(id, entry) {
@@ -252,6 +258,7 @@ export async function saveProfile(profile) {
     data: clone(profile.data),
     // Baut auf demselben Serverstand auf wie eine noch nicht gesendete Änderung.
     base: previous ? previous.base : profile.updatedAt,
+    baseCounts: previous ? previous.baseCounts : profile.syncedCounts || null,
   });
   return flushPending(profile.id, profile);
 }
@@ -260,9 +267,8 @@ export async function saveProfile(profile) {
 // damit eine ältere Speicherung nie eine neuere überholt.
 export function flushPending(id, profile = null) {
   if (!isCloud) return Promise.resolve({ status: 'ok' });
-  const target = profile || (activeProfile?.id === id ? activeProfile : null);
   const previous = inflight.get(id) || Promise.resolve();
-  const run = previous.catch(() => {}).then(() => flushNow(id, target));
+  const run = previous.catch(() => {}).then(() => flushNow(id, profile));
   inflight.set(id, run);
   const cleanup = () => {
     if (inflight.get(id) === run) inflight.delete(id);
@@ -298,11 +304,22 @@ async function flushNow(id, profile) {
 
     if (rows.length > 0) {
       const savedAt = rows[0].updated_at;
+      const savedCounts = countsSnapshot(entry.data);
       const latest = readPending(id);
-      if (latest && JSON.stringify(latest.data) === JSON.stringify(entry.data)) clearPending(id);
+      const newerPending = latest && JSON.stringify(latest.data) !== JSON.stringify(entry.data);
+      if (!newerPending) clearPending(id);
       // Was inzwischen neu vorgemerkt wurde, baut jetzt auf dem gerade gespeicherten Stand auf.
-      else if (latest) writePending(id, { ...latest, base: savedAt });
-      if (profile) profile.updatedAt = savedAt;
+      else writePending(id, { ...latest, base: savedAt, baseCounts: savedCounts });
+      const live = liveProfile(id, profile);
+      if (live) {
+        // Der Serverstand eines Profils darf nie weiter sein als die Daten, die es hält.
+        if (newerPending || JSON.stringify(live.data) === JSON.stringify(entry.data)) {
+          live.updatedAt = savedAt;
+          live.syncedCounts = savedCounts;
+        } else {
+          adoptData(live, normalizeProfileData(clone(entry.data)), savedAt, savedCounts);
+        }
+      }
       return { status: 'ok' };
     }
 
@@ -318,14 +335,11 @@ async function flushNow(id, profile) {
       return { status: 'missing' };
     }
     const latest = readPending(id) || entry;
-    const merged = mergeProfileData(remote.data, latest.data);
-    writePending(id, { data: clone(merged), base: remote.updatedAt });
-    if (profile) {
-      const previousData = profile.data;
-      profile.data = keepUnchangedGames(previousData, merged);
-      profile.updatedAt = remote.updatedAt;
-      conflictHandler?.(profile, previousData);
-    }
+    const merged = mergeProfileData(remote.data, latest.data, latest.baseCounts);
+    const remoteCounts = countsSnapshot(remote.data);
+    writePending(id, { data: clone(merged), base: remote.updatedAt, baseCounts: remoteCounts });
+    const live = liveProfile(id, profile);
+    if (live) adoptData(live, merged, remote.updatedAt, remoteCounts);
   }
   return { status: 'error', error: new StoreError('Speichern fehlgeschlagen.', 'conflict') };
 }

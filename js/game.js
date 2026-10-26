@@ -262,7 +262,8 @@ export function playExtremeGuess(game, guess, solutions, random = Math.random) {
 
   if (game.variant === 'devil') {
     let candidates = devilCandidates(game, solutions);
-    // Sollte die Wortliste sich geändert haben, notfalls neu anfangen statt abzustürzen.
+    // Nur Absturzschutz: Ein durch eine geänderte Wortliste unlösbares Spiel ersetzt die App schon beim Laden
+    // (siehe devilGameStale).
     if (candidates.length === 0) candidates = solutions;
     ({ states: feedback, remaining } = devilRespond(guess, candidates));
     won = feedback.every((s) => s === 'correct');
@@ -289,6 +290,16 @@ export function playExtremeGuess(game, guess, solutions, random = Math.random) {
   return { feedback, won };
 }
 
+// Ein laufendes Teufels-Spiel, zu dem kein Lösungswort mehr passt (weil die Wortliste geändert wurde).
+export function devilGameStale(game, solutions) {
+  return (
+    game?.variant === 'devil' &&
+    game.status === 'playing' &&
+    game.guesses.length > 0 &&
+    devilCandidates(game, solutions).length === 0
+  );
+}
+
 // Tastaturfarben gibt es im Extrem-Modus nur beim Teufel (dort sind die Farben ehrlich).
 export function extremeKeyboardStates(game) {
   if (game.variant !== 'devil') return {};
@@ -309,13 +320,16 @@ export function emptyExtremeStats() {
 
 // ---------- Profildaten ----------
 
+// Die Extrem-Statistik liegt bewusst nicht unter "stats": Ältere App-Versionen bauen "stats" neu auf
+// und würden sie dabei verwerfen, unbekannte Schlüssel auf oberster Ebene behalten sie dagegen.
 export function emptyProfileData() {
   return {
     version: 1,
     daily: null,
     endless: null,
     extreme: {},
-    stats: { daily: emptyStats(), endless: emptyStats(), extreme: emptyExtremeStats() },
+    stats: { daily: emptyStats(), endless: emptyStats() },
+    extremeStats: emptyExtremeStats(),
     settings: { extremeVariant: 'devil' },
   };
 }
@@ -374,12 +388,37 @@ export function normalizeProfileData(data) {
     stats: {
       daily: normalizeStats(data.stats?.daily),
       endless: normalizeStats(data.stats?.endless),
-      extreme: Object.fromEntries(
-        EXTREME_KEYS.map((key) => [key, normalizeStats(data.stats?.extreme?.[key], EXTREME_VARIANTS[key].maxGuesses)]),
-      ),
     },
+    // Übernimmt auch die kurzzeitig unter stats.extreme gespeicherte Statistik (die mit mehr Runden gilt).
+    extremeStats: Object.fromEntries(
+      EXTREME_KEYS.map((key) => {
+        const { maxGuesses } = EXTREME_VARIANTS[key];
+        const current = normalizeStats(data.extremeStats?.[key], maxGuesses);
+        const legacy = normalizeStats(data.stats?.extreme?.[key], maxGuesses);
+        return [key, legacy.played > current.played ? legacy : current];
+      }),
+    ),
     settings,
   };
+}
+
+// Stand der Statistik, auf dem eine lokale Änderung aufbaut (für das Zusammenführen per Zuwachs).
+export function countsSnapshot(data) {
+  const normalized = normalizeProfileData(data);
+  return JSON.parse(JSON.stringify({ stats: normalized.stats, extremeStats: normalized.extremeStats }));
+}
+
+// Übernimmt neue Daten, behält aber unveränderte Spiele als dieselben Objekte,
+// damit ein laufendes Aufdecken nicht unterbrochen wird.
+export function reuseUnchangedGames(live, next) {
+  const same = (a, b) => a && b && JSON.stringify(a) === JSON.stringify(b);
+  const result = { ...next, extreme: { ...next.extreme } };
+  if (same(live?.daily, next.daily)) result.daily = live.daily;
+  if (same(live?.endless, next.endless)) result.endless = live.endless;
+  for (const key of Object.keys(result.extreme)) {
+    if (same(live?.extreme?.[key], result.extreme[key])) result.extreme[key] = live.extreme[key];
+  }
+  return result;
 }
 
 function progress(game) {
@@ -412,11 +451,62 @@ function pickStats(remote, local) {
   return local.played >= remote.played ? local : remote;
 }
 
+// Zählt die seit dem gemeinsamen Stand (base) lokal gespielten Runden auf den Serverstand,
+// damit Runden beider Geräte erhalten bleiben. Ohne base: der Stand mit mehr Runden gilt.
+export function mergeCounts(remote, local, base) {
+  if (!base) return pickStats(remote, local);
+  const localGain = local.played - base.played;
+  const remoteGain = remote.played - base.played;
+  if (localGain <= 0) return pickStats(local, remote);
+  if (remoteGain <= 0) return local;
+  const wonGain = Math.max(0, local.won - base.won);
+  const length = Math.max(remote.dist.length, local.dist.length);
+  const dist = Array.from(
+    { length },
+    (_, i) => (remote.dist[i] || 0) + Math.max(0, (local.dist[i] || 0) - (base.dist[i] || 0)),
+  );
+  // Reihenfolge der Runden beider Geräte ist unbekannt: Hat das Gerät verloren, zählt seine Serie,
+  // sonst setzt es die Serie des Servers fort.
+  const streak = wonGain < localGain ? local.streak : remote.streak + wonGain;
+  return {
+    ...remote,
+    played: remote.played + localGain,
+    won: remote.won + wonGain,
+    dist,
+    streak,
+    maxStreak: Math.max(remote.maxStreak, local.maxStreak, streak),
+  };
+}
+
+// Wie mergeCounts, aber ein auf beiden Geräten beendetes, gleiches Tagesrätsel zählt nur einmal,
+// und die Serie richtet sich nach dem spätesten Siegtag.
+function mergeDailyCounts(remote, local, base, remoteDaily, localDaily) {
+  if (!base) return pickStats(remote, local);
+  const localGain = local.played - base.played;
+  const remoteGain = remote.played - base.played;
+  if (localGain <= 0) return pickStats(local, remote);
+  if (remoteGain <= 0) return local;
+  const sameDayOnBoth =
+    remoteDaily && localDaily && remoteDaily.day === localDaily.day &&
+    remoteDaily.status !== 'playing' && localDaily.status !== 'playing';
+  if (sameDayOnBoth && localGain === 1 && remoteGain === 1) return remote;
+  const merged = mergeCounts(remote, local, base);
+  const later = (local.lastWonDay || '') > (remote.lastWonDay || '') ? local : remote;
+  return {
+    ...merged,
+    lastWonDay: later.lastWonDay,
+    streak: later.streak,
+    maxStreak: Math.max(merged.maxStreak, later.streak),
+  };
+}
+
 // Führt zwei Stände desselben Profils zusammen, wenn zwei Geräte gleichzeitig gespeichert haben.
-// Pro Teil gewinnt der weiter fortgeschrittene Stand, damit keine Runde verloren geht.
-export function mergeProfileData(remoteData, localData) {
+// Spiele: Der weiter fortgeschrittene Stand gewinnt. Statistik: Mit baseCounts (Stand, auf dem die
+// lokalen Daten aufbauen) werden die lokalen Runden auf den Serverstand addiert, sonst gilt der größere.
+export function mergeProfileData(remoteData, localData, baseCounts = null) {
   const remote = normalizeProfileData(remoteData);
   const local = normalizeProfileData(localData);
+  const base = baseCounts ? normalizeProfileData(baseCounts) : null;
   return {
     ...remote,
     ...local,
@@ -426,12 +516,12 @@ export function mergeProfileData(remoteData, localData) {
       EXTREME_KEYS.map((key) => [key, pickExtreme(remote.extreme[key], local.extreme[key])]).filter(([, game]) => game),
     ),
     stats: {
-      daily: pickStats(remote.stats.daily, local.stats.daily),
-      endless: pickStats(remote.stats.endless, local.stats.endless),
-      extreme: Object.fromEntries(
-        EXTREME_KEYS.map((key) => [key, pickStats(remote.stats.extreme[key], local.stats.extreme[key])]),
-      ),
+      daily: mergeDailyCounts(remote.stats.daily, local.stats.daily, base?.stats.daily, remote.daily, local.daily),
+      endless: mergeCounts(remote.stats.endless, local.stats.endless, base?.stats.endless),
     },
+    extremeStats: Object.fromEntries(
+      EXTREME_KEYS.map((key) => [key, mergeCounts(remote.extremeStats[key], local.extremeStats[key], base?.extremeStats[key])]),
+    ),
     settings: local.settings,
   };
 }

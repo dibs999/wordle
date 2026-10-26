@@ -118,7 +118,7 @@ test('Versuche je Variante und Verlieren nach dem letzten Versuch', () => {
 });
 
 test('Extrem-Statistik mit 8 Versuchen', () => {
-  const stats = recordEndlessResult(emptyProfileData().stats.extreme.devil, true, 8);
+  const stats = recordEndlessResult(emptyProfileData().extremeStats.devil, true, 8);
   assert.equal(stats.dist.length, 8);
   assert.equal(stats.dist[7], 1);
 });
@@ -140,7 +140,7 @@ test('Extrem-Spielstände überstehen Normalisieren und Zusammenführen', () => 
   const merged = mergeProfileData(remote, local);
   assert.equal(merged.extreme.liar.guesses.length, 1);
   assert.equal(merged.extreme.devil.guesses.length, 1);
-  for (const key of EXTREME_KEYS) assert.ok(merged.stats.extreme[key]);
+  for (const key of EXTREME_KEYS) assert.ok(merged.extremeStats[key]);
 
   // Kaputte Einträge werden verworfen statt das Spiel abstürzen zu lassen.
   const broken = normalizeProfileData({ extreme: { liar: { variant: 'liar', guesses: 'x' } }, settings: { extremeVariant: '??' } });

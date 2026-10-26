@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="Wordle auf Deutsch: Errate das Wort mit fünf Buchstaben in sechs Versuchen.">
-  <meta name="theme-color" content="#2e2030" media="(prefers-color-scheme: dark)">
-  <meta name="theme-color" content="#fff6ea" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#221921" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fff8f0" media="(prefers-color-scheme: light)">
   <title>Wordle Deutsch</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect x='6' y='10' width='88' height='84' rx='22' fill='%231c5f2d'/%3E%3Crect x='6' y='4' width='88' height='84' rx='22' fill='%232a8540'/%3E%3Ctext x='50' y='66' font-size='58' font-family='Arial Rounded MT Bold,Arial,sans-serif' font-weight='bold' text-anchor='middle' fill='white'%3EW%3C/text%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -19,7 +19,7 @@
       if (theme === 'light' || theme === 'dark') {
         document.documentElement.dataset.theme = theme;
         document.querySelectorAll('meta[name="theme-color"]').forEach(function (meta) {
-          meta.content = theme === 'dark' ? '#2e2030' : '#fff6ea';
+          meta.content = theme === 'dark' ? '#221921' : '#fff8f0';
         });
       }
       if (localStorage.getItem('wordle-de:contrast') === '1') document.documentElement.dataset.contrast = 'high';
@@ -31,14 +31,6 @@
   <!-- Profilauswahl -->
   <main id="profile-screen" class="screen" aria-labelledby="profile-title">
     <div id="profile-toasts" class="toasts profile-toasts" role="status" aria-live="polite"></div>
-    <div class="confetti" aria-hidden="true">
-      <span class="s-present" style="left:6%;top:9%;--r:18deg"></span>
-      <span class="s-grape" style="right:7%;top:7%;--r:-14deg;--s:14px"></span>
-      <span class="s-accent" style="right:8%;top:19%;--r:24deg;--s:12px"></span>
-      <span class="s-sky" style="left:5%;top:21%;--r:-20deg;--s:12px"></span>
-      <span class="s-correct" style="left:15%;top:14%;--r:10deg;--s:10px"></span>
-      <span class="s-present" style="right:17%;top:13%;--r:-8deg;--s:10px"></span>
-    </div>
     <header class="profile-header">
       <div class="logo-big" role="img" aria-label="Wordle Deutsch">
         <div class="logo-tiles" aria-hidden="true">

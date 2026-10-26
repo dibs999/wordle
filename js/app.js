@@ -18,8 +18,12 @@ import {
   newExtremeGame,
   playExtremeGuess,
   devilCandidates,
+  devilGameStale,
   extremeKeyboardStates,
   extremeShareGrid,
+  mergeProfileData,
+  countsSnapshot,
+  reuseUnchangedGames,
 } from './game.js';
 import {
   isCloud,
@@ -340,7 +344,6 @@ function showProfileScreen() {
   state.current = [];
   els.gameScreen.hidden = true;
   els.profileScreen.hidden = false;
-  document.body.classList.remove('is-playing');
   document.title = 'Wordle Deutsch';
   if (state.profiles.length > 0) {
     setProfileStatus('');
@@ -353,14 +356,27 @@ async function selectProfile(id) {
   const token = ++state.selectToken;
   let profile = state.profiles.find((p) => p.id === id);
   if (!profile) return;
-  if (isCloud && !hasPendingSave(id)) {
-    // Frisch laden, falls auf einem anderen Gerät inzwischen gespielt wurde.
+  if (isCloud) {
     const card = els.profileList.querySelector(`[data-id="${CSS.escape(id)}"]`);
     card?.classList.add('is-loading');
-    try {
-      profile = (await fetchProfile(id)) || profile;
-    } catch {
-      // Offline: mit dem zuletzt geladenen Stand weiterspielen.
+    // Erst eine evtl. laufende Speicherung abwarten, damit Daten und Serverstand zusammenpassen.
+    await flushPending(id).catch(() => null);
+    if (!hasPendingSave(id)) {
+      // Frisch laden, falls auf einem anderen Gerät inzwischen gespielt wurde.
+      let fresh;
+      try {
+        fresh = await fetchProfile(id);
+      } catch {
+        fresh = undefined; // Offline: mit dem zuletzt geladenen Stand weiterspielen.
+      }
+      if (fresh === null && token === state.selectToken) {
+        card?.classList.remove('is-loading');
+        state.profiles = state.profiles.filter((p) => p.id !== id);
+        renderProfiles();
+        toast('Dieses Profil gibt es nicht mehr.', 3000);
+        return;
+      }
+      if (fresh) profile = fresh;
     }
     card?.classList.remove('is-loading');
     // Ein späterer Klick oder der Weg zurück zur Liste hat diese Auswahl überholt.
@@ -379,7 +395,6 @@ async function selectProfile(id) {
   const dailyDone = profile.data.daily.status !== 'playing';
   els.profileScreen.hidden = true;
   els.gameScreen.hidden = false;
-  document.body.classList.add('is-playing');
   fillAvatar(els.switchProfile.querySelector('.avatar'), profile.name);
   els.switchProfile.querySelector('.profile-chip-name').textContent = profile.name;
   els.switchProfile.setAttribute('aria-label', `${profile.name} – Profil wechseln`);
@@ -430,8 +445,10 @@ async function persist() {
   } else if (result.status === 'error') {
     toast(`${result.error?.message || 'Speichern fehlgeschlagen'} Wird erneut versucht.`, 3000);
   } else if (result.status === 'missing') {
+    state.profiles = state.profiles.filter((p) => p.id !== profile.id);
     if (state.profile === profile && !state.busy) {
-      state.profiles = state.profiles.filter((p) => p.id !== profile.id);
+      // Vorher abmelden, damit showProfileScreen das gelöschte Profil nicht wieder in die Liste setzt.
+      state.profile = null;
       showProfileScreen();
     }
     toast('Dieses Profil gibt es nicht mehr.', 3000);
@@ -457,7 +474,10 @@ function ensureGames() {
     data.endless = { answer: randomAnswer(SOLUTIONS), guesses: [], status: 'playing' };
   }
   const variant = extremeVariant();
-  if (!data.extreme[variant]) data.extreme[variant] = newExtremeGame(variant, SOLUTIONS);
+  // Ein Teufels-Spiel, zu dem nach einer Änderung der Wortliste kein Wort mehr passt, neu beginnen.
+  if (!data.extreme[variant] || devilGameStale(data.extreme[variant], SOLUTIONS)) {
+    data.extreme[variant] = newExtremeGame(variant, SOLUTIONS);
+  }
 }
 
 function currentGame() {
@@ -472,8 +492,8 @@ function maxGuesses() {
 }
 
 function currentStats() {
-  const stats = state.profile.data.stats;
-  return state.mode === 'extreme' ? stats.extreme[extremeVariant()] : stats[state.mode];
+  const data = state.profile.data;
+  return state.mode === 'extreme' ? data.extremeStats[extremeVariant()] : data.stats[state.mode];
 }
 
 // Angezeigte Rückmeldung eines Versuchs: Farben pro Buchstabe oder (Mastermind) nur Anzahlen.
@@ -507,20 +527,29 @@ function setMode(mode) {
   clearTimeout(state.statsTimer);
   state.statsTimer = null;
   ensureGames();
-  if (mode !== 'daily' && currentGame().status !== 'playing') startNextRound();
-  for (const tab of document.querySelectorAll('.mode-tab')) {
-    tab.setAttribute('aria-pressed', String(tab.dataset.mode === mode));
+  if (mode !== 'daily' && currentGame().status !== 'playing') {
+    startNextRound();
+    // Gleich speichern, damit ein Abgleich mit dem Server die neue Runde nicht wieder verdrängt.
+    persist();
   }
-  for (const chip of document.querySelectorAll('.variant-chip')) {
-    chip.setAttribute('aria-pressed', String(chip.dataset.variant === extremeVariant()));
-  }
-  els.variantBar.hidden = mode !== 'extreme';
   els.dailyNumber.textContent = `#${puzzleNumber(state.today)}`;
   clearToasts();
   renderAll();
 }
 
+// Reiter, Varianten-Knöpfe und Variantenleiste passend zum aktuellen Spielstand.
+function syncModeChrome() {
+  for (const tab of document.querySelectorAll('.mode-tab')) {
+    tab.setAttribute('aria-pressed', String(tab.dataset.mode === state.mode));
+  }
+  for (const chip of document.querySelectorAll('.variant-chip')) {
+    chip.setAttribute('aria-pressed', String(chip.dataset.variant === extremeVariant()));
+  }
+  els.variantBar.hidden = state.mode !== 'extreme';
+}
+
 function renderAll() {
+  syncModeChrome();
   renderBoard();
   renderKeyboardStates();
   renderCaption();
@@ -589,10 +618,16 @@ async function refreshFromCloud() {
   }
   // Jeder andere Serverstand stammt von einem anderen Gerät (Uhren der Geräte können abweichen).
   if (timeValue(remote.updatedAt) === timeValue(profile.updatedAt)) return;
+  // Zusammenführen statt blind übernehmen: Die gewählte Variante bleibt die dieses Geräts, und ein
+  // veralteter Tab (z. B. mit älterer App-Version) kann keine Runden oder Statistik zurückdrehen.
+  const merged = mergeProfileData(remote.data, profile.data);
   const before = gameIdentity();
-  profile.data = remote.data;
+  profile.data = reuseUnchangedGames(profile.data, merged);
   profile.updatedAt = remote.updatedAt;
+  profile.syncedCounts = countsSnapshot(remote.data);
   applyProfileUpdate(before);
+  // Hat das Zusammenführen etwas repariert, den reparierten Stand zurückspeichern.
+  if (JSON.stringify(merged) !== JSON.stringify(remote.data)) persist();
 }
 
 // ---------- Spielfeld ----------
@@ -848,8 +883,9 @@ async function submitGuess() {
     } else if (state.mode === 'endless') {
       stats.endless = recordEndlessResult(stats.endless, won, game.guesses.length);
     } else {
+      const { extremeStats } = state.profile.data;
       const variant = extremeVariant();
-      stats.extreme[variant] = recordEndlessResult(stats.extreme[variant], won, game.guesses.length);
+      extremeStats[variant] = recordEndlessResult(extremeStats[variant], won, game.guesses.length);
     }
   }
 
@@ -1051,7 +1087,7 @@ function syncThemeColor() {
   const theme = document.documentElement.dataset.theme;
   for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
     const dark = theme === 'dark' || (!theme && meta.media.includes('dark'));
-    meta.content = dark ? '#2e2030' : '#fff6ea';
+    meta.content = dark ? '#221921' : '#fff8f0';
   }
 }
 

@@ -157,3 +157,28 @@ test('schnell hintereinander gespeicherte Stände kommen in der richtigen Reihen
   assert.deepEqual(server.rows.get(profile.id).data.endless.guesses, ['LEBEN', 'ESSEN', 'APFEL']);
   assert.equal(store.hasPendingSave(profile.id), false);
 });
+
+test('gleichzeitig auf zwei Geräten gespielte Runden zählen beide', { skip: !store.isCloud }, async () => {
+  const { recordEndlessResult } = await import('../js/game.js');
+  const profile = await newProfile('Emil');
+
+  // Anderes Gerät gewinnt eine Endlos-Runde und speichert.
+  const row = server.rows.get(profile.id);
+  row.data = { ...row.data, stats: { ...row.data.stats, endless: recordEndlessResult(row.data.stats.endless, true, 2) } };
+  row.updated_at = server.stamp(Date.now());
+
+  // Dieses Gerät verliert zeitgleich eine Runde, ohne den neuen Stand zu kennen.
+  profile.data.stats.endless = recordEndlessResult(profile.data.stats.endless, false, 6);
+  const result = await store.saveProfile(profile);
+
+  assert.equal(result.status, 'ok');
+  const saved = server.rows.get(profile.id).data.stats.endless;
+  assert.equal(saved.played, 2, 'beide Runden gezählt');
+  assert.equal(saved.won, 1);
+  assert.equal(profile.data.stats.endless.played, 2, 'die App zeigt den zusammengeführten Stand');
+
+  // Eine weitere Runde danach baut auf dem zusammengeführten Stand auf und zählt nicht doppelt.
+  profile.data.stats.endless = recordEndlessResult(profile.data.stats.endless, true, 3);
+  await store.saveProfile(profile);
+  assert.equal(server.rows.get(profile.id).data.stats.endless.played, 3);
+});
