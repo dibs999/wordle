@@ -3,5 +3,5 @@
 // Der "anon"/"publishable" Schlüssel ist öffentlich gedacht und darf im Code stehen.
 // Solange die Werte leer sind, werden Profile nur lokal in diesem Browser gespeichert.
 
-export const SUPABASE_URL = '';
-export const SUPABASE_KEY = '';
+export const SUPABASE_URL = 'https://bpuyssubkkxxqrytvhqm.supabase.co';
+export const SUPABASE_KEY = 'sb_publishable_KPosLryVBXbc73BHre8BQg_TxX58hw0';
