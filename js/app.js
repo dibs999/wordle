@@ -26,6 +26,10 @@ import {
   dailyRanking,
   streakRanking,
   blitzRanking,
+  BLITZ_START_SECONDS,
+  blitzPoints,
+  blitzTimeBonus,
+  recordBlitzRun,
   achievementRanking,
   rankOf,
   durationMs,
@@ -82,7 +86,6 @@ const KEY_ROWS = [
   ['ENTER', 'Y', 'X', 'C', 'V', 'B', 'N', 'M', 'BACKSPACE'],
 ];
 const STATE_LABEL = { correct: 'richtig', present: 'an anderer Stelle', absent: 'nicht im Wort' };
-const BLITZ_SECONDS = 60;
 const BLITZ_PAUSE = 1300;
 const BLITZ_URGENT_MS = 10_000; // in den letzten Sekunden tickt die Uhr und der Balken wird rot
 const BADGE_POPUP_MS = 3600;
@@ -127,6 +130,7 @@ const els = {
   variantChips: $('variant-chips'),
   badgePopup: $('badge-popup'),
   blitzStart: $('blitz-start'),
+  blitzStartPanel: $('blitz-start-panel'),
   blitzSkip: $('blitz-skip'),
   blitzCountdown: $('blitz-countdown'),
   themeSelect: $('theme-select'),
@@ -149,7 +153,8 @@ const state = {
   boardShape: '',
   boardIdentity: '',
   blitzRound: null, // Wort des laufenden Blitz-Durchgangs (wird nicht gespeichert)
-  blitz: null, // laufender Durchgang: Phase (countdown/running), Ende, Punkte, Wörter und Zeitgeber
+  blitz: null, // laufender Durchgang: Phase (countdown/running), Ende, Punkte, Wörter, Kombo und Zeitgeber
+  blitzLast: null, // Punkte und Wörter des zuletzt beendeten Durchgangs (für die Anzeige)
   blitzHintAt: 0,
   statsTab: 'stats', // 'stats' | 'badges'
   rankingBoard: 'daily', // 'daily' | 'streak' | 'blitz' | 'badges'
@@ -211,8 +216,6 @@ function el(tag, className = '', text = null) {
   if (text != null) node.textContent = text;
   return node;
 }
-
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function nameHash(name) {
   let hash = 0;
@@ -631,7 +634,7 @@ function renderAll() {
   renderCaption();
 }
 
-// Beschriftung unter den Reitern: Extrem-Erklärung oder Blitz-Stand.
+// Beschriftung unter den Reitern (Extrem-Erklärung) und die Blitz-Anzeige.
 function renderCaption() {
   const game = currentGame();
   let text = '';
@@ -642,13 +645,10 @@ function renderCaption() {
       const left = devilCandidates(game, SOLUTIONS).length;
       text = left === 1 ? 'Nur noch ein Wort möglich!' : `Noch ${left} Wörter möglich.`;
     }
-  } else if (state.mode === 'blitz') {
-    text = blitzStatus();
   }
   els.variantCaption.textContent = text;
-  els.variantCaption.classList.toggle('is-message', state.mode === 'blitz');
-  // Vor dem Start erklärt die Zeile nur den Modus; im Querformat fällt sie dann weg.
-  els.variantCaption.classList.toggle('is-idle', state.mode === 'blitz' && state.blitz?.phase !== 'running');
+  // Im Blitz steht alles in der großen Anzeige und auf der Start-Karte.
+  els.variantCaption.hidden = state.mode === 'blitz';
   renderBlitzBar();
 }
 
@@ -1018,7 +1018,7 @@ async function submitGuess() {
   renderCaption();
   announce(`Versuch ${rowIndex + 1}: ${describeFeedback(guess, feedback)}`);
   if (mode === 'blitz') {
-    if (game.status !== 'playing') afterBlitzWord(blitzRun, won, game.answer);
+    if (game.status !== 'playing') afterBlitzWord(blitzRun, won, game.answer, game.guesses.length);
     return;
   }
 
@@ -1062,8 +1062,8 @@ function shareText() {
   const url = `${location.origin}${location.pathname}`;
   if (mode === 'blitz') {
     const row = result.words.map((w) => (w.solved ? '🟩' : '⬛')).join('');
-    const words = result.score === 1 ? 'Wort' : 'Wörter';
-    return `Wordle Deutsch Blitz ⚡ ${result.score} ${words} in ${BLITZ_SECONDS} Sekunden\n\n${row}\n\n${url}`;
+    const words = result.solved === 1 ? 'Wort' : 'Wörter';
+    return `Wordle Deutsch Blitz ⚡ ${result.score} Punkte · ${result.solved} ${words}\n\n${row}\n\n${url}`;
   }
   const score = game.status === 'won' ? game.guesses.length : 'X';
   if (mode === 'extreme') {
@@ -1210,33 +1210,62 @@ function newBlitzRound(status = 'playing') {
   return { answer: randomAnswer(SOLUTIONS, state.blitzRound?.answer), guesses: [], status };
 }
 
+function blitzOver() {
+  return !state.blitz && state.blitzRound?.status === 'over';
+}
+
 function blitzRemainingMs() {
   const run = state.blitz;
-  return run?.phase === 'running' ? Math.max(0, run.endsAt - Date.now()) : BLITZ_SECONDS * 1000;
+  if (run?.phase === 'running') return Math.max(0, run.endsAt - Date.now());
+  return blitzOver() ? 0 : BLITZ_START_SECONDS * 1000;
 }
 
-function blitzStatus() {
-  const run = state.blitz;
-  if (run?.phase === 'running') return `⏱ ${Math.ceil(blitzRemainingMs() / 1000)} s · ${run.score} gelöst`;
-  if (run?.phase === 'countdown') return 'Gleich geht’s los …';
-  if (state.blitzRound?.status === 'over') return 'Zeit um! Noch ein Durchgang?';
-  return `${BLITZ_SECONDS} Sekunden, so viele Wörter wie möglich. Bereit?`;
+// Restzeit als Uhr, z. B. 1:05 (aufgerundet, damit 0:00 erst am Ende erscheint).
+function formatClock(ms) {
+  const seconds = Math.ceil(ms / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-// Zeitbalken, Start- und Überspringen-Knopf passend zum Durchgang.
+// Anzeige über dem Spielfeld (Zeit, Punkte, Wörter, Kombo) und die Start-Karte.
 function renderBlitzBar() {
   const on = state.mode === 'blitz';
   $('blitz-bar').hidden = !on;
+  els.blitzStartPanel.hidden = !on || Boolean(state.blitz);
   if (!on) return;
   const run = state.blitz;
   const running = run?.phase === 'running';
   const left = blitzRemainingMs();
-  els.blitzStart.hidden = Boolean(run);
-  els.blitzStart.lastChild.textContent = state.blitzRound?.status === 'over' ? ' Nochmal' : ' Start';
-  els.blitzSkip.hidden = !running;
-  els.blitzSkip.disabled = state.busy || state.blitzRound?.status !== 'playing';
-  $('blitz-meter-fill').style.width = `${(left / (BLITZ_SECONDS * 1000)) * 100}%`;
-  $('blitz-meter').classList.toggle('is-urgent', running && left <= BLITZ_URGENT_MS);
+  const urgent = running && left <= BLITZ_URGENT_MS;
+  // Nach dem Ende bleibt das Ergebnis des letzten Durchgangs stehen.
+  const shown = run || (blitzOver() ? state.blitzLast : null);
+  $('blitz-time').textContent = formatClock(left);
+  $('blitz-points').textContent = shown?.score ?? 0;
+  $('blitz-solved').textContent = shown?.solved ?? 0;
+  const combo = running ? run.combo : 0;
+  $('blitz-combo').hidden = combo < 2;
+  $('blitz-combo').textContent = `×${combo}`;
+  $('blitz-clock').classList.toggle('is-urgent', urgent);
+  $('blitz-meter-fill').style.width = `${Math.min(1, left / (BLITZ_START_SECONDS * 1000)) * 100}%`;
+  $('blitz-meter').classList.toggle('is-urgent', urgent);
+  els.blitzSkip.disabled = !running || state.busy || state.blitzRound?.status !== 'playing';
+
+  const over = blitzOver();
+  $('blitz-start-title').textContent = over ? 'Zeit um!' : 'Blitz';
+  els.blitzStart.lastChild.textContent = over ? ' Nochmal' : ' Start';
+  const record = state.profile?.data.blitzStats.bestScore;
+  $('blitz-record').textContent = record ? `Dein Rekord: ${record} Punkte` : '';
+}
+
+// Kurz aufsteigende Einblendung wie „+40“ über einem Feld der Blitz-Anzeige.
+function floatText(id, text) {
+  const host = $(id);
+  const float = el('span', 'blitz-float', text);
+  float.setAttribute('aria-hidden', 'true');
+  host.append(float);
+  float.addEventListener('animationend', () => float.remove(), { once: true });
+  host.classList.remove('is-bumped');
+  void host.offsetWidth;
+  host.classList.add('is-bumped');
 }
 
 function hintBlitzStart() {
@@ -1251,8 +1280,10 @@ function startBlitzCountdown() {
   if (els.statsDialog.open) els.statsDialog.close();
   clearToasts();
   state.blitzRound = newBlitzRound('idle');
+  state.blitzLast = null;
   state.current = [];
-  const run = { phase: 'countdown', endsAt: 0, score: 0, words: [], timer: null, lastTick: null };
+  // score: Punkte, solved: gelöste Wörter, combo: gelöste Wörter in Folge.
+  const run = { phase: 'countdown', endsAt: 0, score: 0, solved: 0, combo: 0, words: [], timer: null, lastTick: null };
   state.blitz = run;
   renderAll();
   const count = (n) => {
@@ -1268,7 +1299,7 @@ function startBlitzCountdown() {
 
 function startBlitzRun(run) {
   run.phase = 'running';
-  run.endsAt = Date.now() + BLITZ_SECONDS * 1000;
+  run.endsAt = Date.now() + BLITZ_START_SECONDS * 1000;
   run.timer = setInterval(tickBlitz, 100);
   state.blitzRound = newBlitzRound();
   state.current = [];
@@ -1282,7 +1313,7 @@ function tickBlitz() {
   const run = state.blitz;
   if (run?.phase !== 'running') return;
   const left = run.endsAt - Date.now();
-  // Während ein Wort aufgedeckt wird, endet der Durchgang erst danach.
+  // Während ein Wort aufgedeckt wird, endet der Durchgang erst danach (ein gelöstes Wort bringt noch Zeit).
   if (left <= 0 && !state.busy) {
     finishBlitz({ show: true });
     return;
@@ -1292,10 +1323,10 @@ function tickBlitz() {
     run.lastTick = second;
     playTick(second <= 3);
   }
-  renderCaption();
+  renderBlitzBar();
 }
 
-// Beendet den Durchgang (oder bricht den Countdown ab) und speichert Bestwert, Durchgänge und Wörter.
+// Beendet den Durchgang (oder bricht den Countdown ab) und speichert Rekorde, Durchgänge und Wörter.
 // show: Ergebnis anzeigen (nur wenn die Zeit regulär abgelaufen ist).
 function finishBlitz({ show = false } = {}) {
   const run = state.blitz;
@@ -1313,34 +1344,28 @@ function finishBlitz({ show = false } = {}) {
   // Das angefangene Wort zählt als nicht gelöst.
   if (round?.status === 'playing') run.words.push({ answer: round.answer, solved: false });
   if (round) round.status = 'over';
+  state.blitzLast = { score: run.score, solved: run.solved };
   state.current = [];
-  if (state.mode === 'blitz') renderAll();
   const data = state.profile?.data;
+  const isNewBest = Boolean(data) && run.score > 0 && run.score > data.blitzStats.bestScore;
+  if (data) data.blitzStats = recordBlitzRun(data.blitzStats, { score: run.score, words: run.solved });
+  // Erst nach dem Speichern zeichnen, damit die Start-Karte schon den neuen Rekord zeigt.
+  if (state.mode === 'blitz') renderAll();
   if (!data) return;
-  const stats = data.blitzStats;
-  const isNewBest = run.score > 0 && run.score > stats.best;
-  stats.best = Math.max(stats.best, run.score);
-  stats.runs += 1;
-  stats.words += run.score;
   const unlocked = collectAchievements();
   persist();
   if (!show) return;
 
+  // Die Zeit ist um: ein Gong, kein Jubel. Gefeiert wird nur ein neues Abzeichen.
   playTimeUp();
   const profile = state.profile;
   const stillHere = () => state.profile === profile && state.mode === 'blitz' && !state.blitz;
-  const result = { score: run.score, words: run.words, isNewBest };
+  const result = { score: run.score, solved: run.solved, words: run.words, isNewBest };
   setTimeout(async () => {
     if (!stillHere()) return;
-    if (isNewBest) {
-      playWin();
-      burstConfetti();
-    }
     await showBadgePopups(unlocked);
-    // Das Konfetti erst fliegen lassen, bevor der Dialog es verdeckt.
-    if (isNewBest && unlocked.length === 0) await wait(REDUCED_MOTION ? 300 : 1500);
     if (stillHere() && !document.querySelector('dialog[open]')) showBlitzStats(result);
-  }, 800);
+  }, 900);
 }
 
 function nextBlitzRound(run) {
@@ -1350,35 +1375,49 @@ function nextBlitzRound(run) {
   renderAll();
 }
 
-// Nach jedem Wort im Blitz: Punkt bei Sieg, die Lösung bei Niederlage, dann kurz Pause und das nächste Wort.
-function afterBlitzWord(run, won, answer) {
+// Nach jedem Wort im Blitz: bei einem Sieg Punkte, Extrazeit und Kombo, sonst die Lösung zeigen
+// und die Kombo zurücksetzen. Dann kurz Pause und das nächste Wort.
+function afterBlitzWord(run, won, answer, guesses) {
   if (!run || state.blitz !== run) return;
-  run.words.push({ answer, solved: won });
   if (won) {
-    run.score += 1;
-    toast(`+1 · ${run.score} gelöst`, 1100);
+    run.combo += 1;
+    const points = blitzPoints(guesses, run.combo);
+    const bonus = blitzTimeBonus(guesses);
+    run.score += points;
+    run.solved += 1;
+    run.endsAt += bonus * 1000;
+    run.lastTick = null;
+    run.words.push({ answer, solved: true, points });
+    renderBlitzBar();
+    floatText('blitz-points-box', `+${points}`);
+    floatText('blitz-clock', `+${bonus} s`);
+    if (run.combo >= 2) toast(`Kombo ×${run.combo}!`, 1100);
+    announce(`Gelöst: ${points} Punkte und ${bonus} Sekunden extra.`);
     burstConfetti({ kind: 'burst', count: 45, origin: { x: 0.5, y: 0.4 }, power: 10 });
     playWin({ short: true });
   } else {
+    run.combo = 0;
+    run.words.push({ answer, solved: false });
     toast(answer, 1600);
     playLose();
+    renderBlitzBar();
   }
-  renderCaption();
   setTimeout(() => nextBlitzRound(run), won ? BLITZ_PAUSE - 400 : BLITZ_PAUSE);
 }
 
-// Wort überspringen: zählt als nicht gelöst, kostet aber keine Zeit außer der schon verbrauchten.
+// Wort überspringen: zählt als nicht gelöst und beendet die Kombo.
 function skipBlitzWord() {
   const run = state.blitz;
   const round = state.blitzRound;
   if (run?.phase !== 'running' || state.busy || round?.status !== 'playing') return;
   run.words.push({ answer: round.answer, solved: false });
+  run.combo = 0;
   round.status = 'lost';
   toast(round.answer, 1200);
   nextBlitzRound(run);
 }
 
-// Im Statistik-Dialog stehen im Blitz Bestwert, Durchgänge und Schnitt statt der normalen Zahlen.
+// Im Statistik-Dialog stehen im Blitz Rekord, Durchgänge und Schnitt statt der normalen Zahlen.
 function setBlitzView(on) {
   $('blitz-stats').hidden = !on;
   $('stats-numbers').hidden = on;
@@ -1392,8 +1431,8 @@ function setBlitzView(on) {
 
 function showBlitzStats(result = null, tab = 'stats') {
   setBlitzView(true);
-  const { best, runs, words } = state.profile.data.blitzStats;
-  $('blitz-best').textContent = best;
+  const { bestScore, runs, words } = state.profile.data.blitzStats;
+  $('blitz-best').textContent = bestScore;
   $('blitz-runs').textContent = runs;
   $('blitz-average').textContent = runs ? (words / runs).toLocaleString('de-DE', { maximumFractionDigits: 1 }) : '0';
   $('stats-mode').textContent = '⚡ Blitz';
@@ -1404,16 +1443,19 @@ function showBlitzStats(result = null, tab = 'stats') {
   if (result) {
     $('result-title').textContent = 'Zeit um! ⏱';
     $('blitz-score').textContent = result.score;
-    $('blitz-score-label').textContent = result.score === 1 ? 'Wort gelöst' : 'Wörter gelöst';
+    $('blitz-score-label').textContent = `Punkte · ${result.solved} ${result.solved === 1 ? 'Wort' : 'Wörter'} gelöst`;
     $('blitz-best-note').hidden = !result.isNewBest;
     const rows = blitzRanking(rankingProfiles());
-    const place = rankOf(rows, state.profile.id, (row) => row.best);
+    const place = rankOf(rows, state.profile.id, (row) => row.score);
     $('blitz-rank').textContent =
-      rows.length > 1 && best > 0 && place ? `Mit deinem Bestwert ${best} bist du auf Platz ${place} von ${rows.length}.` : '';
+      rows.length > 1 && bestScore > 0 && place
+        ? `Mit deinem Rekord von ${bestScore} Punkten bist du auf Platz ${place} von ${rows.length}.`
+        : '';
     $('blitz-words').replaceChildren(
       ...result.words.map((w) => {
         const li = el('li', w.solved ? 'is-solved' : 'is-missed', w.answer);
-        li.setAttribute('aria-label', `${w.answer}, ${w.solved ? 'gelöst' : 'nicht gelöst'}`);
+        if (w.solved) li.append(el('small', '', `+${w.points}`));
+        li.setAttribute('aria-label', w.solved ? `${w.answer}, gelöst, ${w.points} Punkte` : `${w.answer}, nicht gelöst`);
         return li;
       }),
     );
@@ -1558,7 +1600,7 @@ function dismissBadgePopups() {
 const RANKING_CAPTION = {
   daily: () => `Tagesrätsel #${puzzleNumber(state.today)}: weniger Versuche zuerst, bei Gleichstand die schnellere Zeit.`,
   streak: () => 'Aktuelle Serie im Tagesrätsel, bei Gleichstand zählt die beste Serie.',
-  blitz: () => `Meiste Wörter in einem Blitz-Durchgang (${BLITZ_SECONDS} Sekunden).`,
+  blitz: () => 'Höchste Punktzahl in einem Blitz-Durchgang, bei Gleichstand zählen die Wörter.',
   badges: () => 'Erreichte Abzeichen, bei Gleichstand zählen Gold und dann Silber.',
 };
 
@@ -1595,13 +1637,17 @@ function rankingRows(board, profiles) {
   }
   if (board === 'blitz') {
     const rows = blitzRanking(profiles);
-    return rows.map((row) => ({
-      ...row,
-      place: row.best > 0 ? rankOf(rows, row.id, (r) => r.best) : null,
-      value: row.best > 0 ? `⚡ ${row.best}` : '–',
-      sub: row.runs ? `${row.runs} ${row.runs === 1 ? 'Durchgang' : 'Durchgänge'}` : 'noch nicht gespielt',
-      empty: row.best === 0,
-    }));
+    return rows.map((row) => {
+      const runs = `${row.runs} ${row.runs === 1 ? 'Durchgang' : 'Durchgänge'}`;
+      const words = `max. ${row.words} ${row.words === 1 ? 'Wort' : 'Wörter'}`;
+      return {
+        ...row,
+        place: row.score > 0 ? rankOf(rows, row.id, (r) => `${r.score}:${r.words}`) : null,
+        value: row.score > 0 ? `⚡ ${row.score}` : '–',
+        sub: row.runs ? `${runs} · ${words}` : 'noch nicht gespielt',
+        empty: row.score === 0,
+      };
+    });
   }
   const rows = achievementRanking(profiles);
   return rows.map((row) => ({

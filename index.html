@@ -43,7 +43,7 @@
     </header>
     <p id="profile-status" class="profile-status" role="status"></p>
     <ul id="profile-list" class="profile-list" aria-label="Profile"></ul>
-    <button id="ranking-button" class="button button-secondary" type="button">
+    <button id="ranking-button" class="button button-secondary ranking-start" type="button">
       <span aria-hidden="true">🏆</span> Rangliste
     </button>
     <button id="new-profile-button" class="button button-add" type="button">
@@ -101,11 +101,25 @@
       </div>
       <p id="variant-caption" class="variant-caption" aria-live="polite"></p>
       <div id="blitz-bar" class="blitz-bar" hidden>
-        <div id="blitz-meter" class="meter blitz-meter" aria-hidden="true"><span id="blitz-meter-fill"></span></div>
-        <div class="blitz-controls">
-          <button id="blitz-start" class="button blitz-start" type="button"><span aria-hidden="true">▶</span> Start</button>
-          <button id="blitz-skip" class="button button-secondary blitz-skip" type="button" hidden>Überspringen <span aria-hidden="true">⏭</span></button>
+        <div class="blitz-hud">
+          <div id="blitz-clock" class="blitz-stat blitz-clock">
+            <span class="blitz-stat-label">Zeit</span>
+            <strong id="blitz-time">2:00</strong>
+          </div>
+          <div id="blitz-points-box" class="blitz-stat">
+            <span class="blitz-stat-label">Punkte</span>
+            <strong id="blitz-points">0</strong>
+            <span id="blitz-combo" class="blitz-combo" hidden></span>
+          </div>
+          <div class="blitz-stat">
+            <span class="blitz-stat-label">Wörter</span>
+            <strong id="blitz-solved">0</strong>
+          </div>
+          <button id="blitz-skip" class="blitz-skip" type="button" aria-label="Wort überspringen" title="Wort überspringen" disabled>
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6l8 6-8 6zM14 6l8 6-8 6"/></svg>
+          </button>
         </div>
+        <div id="blitz-meter" class="meter blitz-meter" aria-hidden="true"><span id="blitz-meter-fill"></span></div>
       </div>
     </div>
 
@@ -113,6 +127,14 @@
       <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
       <div id="sr-status" class="sr-only" aria-live="polite" aria-atomic="true"></div>
       <div id="board" class="board" role="grid" aria-label="Spielfeld"></div>
+      <div id="blitz-start-panel" class="blitz-start-panel" hidden>
+        <div class="blitz-start-card">
+          <strong id="blitz-start-title" class="blitz-start-title">Blitz</strong>
+          <p class="blitz-start-text">2 Minuten. Jedes gelöste Wort bringt Punkte und Extrazeit – je weniger Versuche, desto mehr.</p>
+          <button id="blitz-start" class="button blitz-start" type="button"><span aria-hidden="true">▶</span> Start</button>
+          <p id="blitz-record" class="blitz-record"></p>
+        </div>
+      </div>
       <div id="blitz-countdown" class="blitz-countdown" aria-live="assertive" hidden></div>
     </main>
 
@@ -171,7 +193,7 @@
         <li><strong>🙈 Blind</strong> (6 Versuche): Es gibt nur Grün und Grau, kein Gelb. Die Tastatur bleibt ungefärbt.</li>
         <li><strong>🎯 Mastermind</strong> (8 Versuche): Keine Farben, nur zwei Zahlen: wie viele Buchstaben an der richtigen und wie viele an einer anderen Stelle sind.</li>
       </ul>
-      <p><strong>Blitz:</strong> 60 Sekunden, so viele Wörter wie möglich. Mit „Start“ geht es los. Ein Wort, bei dem du festhängst, kannst du überspringen.</p>
+      <p><strong>Blitz:</strong> Du startest mit 2 Minuten und löst so viele Wörter wie möglich. Jedes gelöste Wort bringt Punkte und Extrazeit: mit einem Versuch 60 Punkte und 30 Sekunden, mit sechs Versuchen nur noch 10 Punkte und 5 Sekunden. Löst du mehrere Wörter hintereinander, gibt es einen Kombo-Bonus (+10 je Wort, höchstens +50). Ein Wort, bei dem du festhängst, kannst du überspringen – das beendet aber die Kombo.</p>
       <h3>Abzeichen und Rangliste</h3>
       <p>Für Erfolge gibt es Abzeichen in Bronze, Silber und Gold. Sie stehen unter „Statistik“ → „Abzeichen“, mit Fortschritt bis zum nächsten. In der Rangliste vergleicht ihr euch: heute, Serien, Blitz und Abzeichen.</p>
     </div>
@@ -189,8 +211,8 @@
         <p id="result-word" class="result-word"></p>
         <a id="duden-link" class="duden-link" href="#" target="_blank" rel="noopener">Im Duden nachschlagen ↗</a>
         <div id="blitz-result" class="blitz-result" hidden>
-          <p class="blitz-score"><strong id="blitz-score">0</strong> <span id="blitz-score-label">Wörter gelöst</span></p>
-          <p id="blitz-best-note" class="blitz-best-note" hidden>Neue Bestleistung!</p>
+          <p class="blitz-score"><strong id="blitz-score">0</strong> <span id="blitz-score-label">Punkte</span></p>
+          <p id="blitz-best-note" class="blitz-best-note" hidden>Neuer Rekord!</p>
           <p id="blitz-rank" class="blitz-rank"></p>
           <ul id="blitz-words" class="blitz-words" aria-label="Wörter dieses Durchgangs"></ul>
         </div>
@@ -217,7 +239,7 @@
           <span id="stats-mode" class="stats-mode"></span>
         </div>
         <div id="blitz-stats" class="stats-numbers blitz-stats" hidden>
-          <div><strong id="blitz-best">0</strong><span>Bestes Ergebnis</span></div>
+          <div><strong id="blitz-best">0</strong><span>Punkte-Rekord</span></div>
           <div><strong id="blitz-runs">0</strong><span>Durchgänge</span></div>
           <div><strong id="blitz-average">0</strong><span>Ø Wörter</span></div>
         </div>

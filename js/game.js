@@ -330,8 +330,9 @@ export function emptyProfileData() {
     extreme: {},
     stats: { daily: emptyStats(), endless: emptyStats() },
     extremeStats: emptyExtremeStats(),
-    // Blitz: meiste gelöste Wörter in einem Durchgang, Anzahl der Durchgänge und gelöste Wörter insgesamt.
-    blitzStats: { best: 0, runs: 0, words: 0 },
+    // Blitz: meiste gelöste Wörter in einem Durchgang, Anzahl der Durchgänge, gelöste Wörter insgesamt
+    // und die höchste Punktzahl eines Durchgangs.
+    blitzStats: { best: 0, runs: 0, words: 0, bestScore: 0 },
     // Erreichte Abzeichen mit Datum der Freischaltung: { [id]: ISO-Zeit }.
     achievements: {},
     // Bestwerte, die sich nicht aus der Statistik ablesen lassen.
@@ -400,6 +401,7 @@ export function normalizeProfileData(data) {
       best: Number(data.blitzStats?.best) || 0,
       runs: Number(data.blitzStats?.runs) || 0,
       words: Number(data.blitzStats?.words) || 0,
+      bestScore: Number(data.blitzStats?.bestScore) || 0,
     },
     achievements: Object.fromEntries(
       Object.entries(data.achievements && typeof data.achievements === 'object' ? data.achievements : {}).filter(
@@ -500,11 +502,12 @@ export function mergeProfileData(remoteData, localData) {
     extremeStats: Object.fromEntries(
       EXTREME_KEYS.map((key) => [key, pickStats(remote.extremeStats[key], local.extremeStats[key])]),
     ),
-    // Bestwert und Anzahl der Durchgänge: jeweils der höhere Stand.
+    // Bestwerte und Anzahl der Durchgänge: jeweils der höhere Stand.
     blitzStats: {
       best: Math.max(remote.blitzStats.best, local.blitzStats.best),
       runs: Math.max(remote.blitzStats.runs, local.blitzStats.runs),
       words: Math.max(remote.blitzStats.words, local.blitzStats.words),
+      bestScore: Math.max(remote.blitzStats.bestScore, local.blitzStats.bestScore),
     },
     // Ein Abzeichen, das ein Gerät erreicht hat, bleibt erreicht (mit dem frühesten Datum).
     achievements: mergeAchievementDates(remote.achievements, local.achievements),
@@ -512,6 +515,40 @@ export function mergeProfileData(remoteData, localData) {
       fastestWinMs: minOrNull(remote.records.fastestWinMs, local.records.fastestWinMs),
     },
     settings: local.settings,
+  };
+}
+
+// ---------- Blitz ----------
+
+// Ein Durchgang beginnt mit zwei Minuten; jedes gelöste Wort bringt Punkte und Extrazeit,
+// beides umso mehr, je weniger Versuche es gebraucht hat (Index = Versuche - 1).
+export const BLITZ_START_SECONDS = 120;
+const BLITZ_POINTS = [60, 50, 40, 30, 20, 10];
+const BLITZ_TIME_BONUS = [30, 25, 20, 15, 10, 5];
+const BLITZ_COMBO_STEP = 10;
+const BLITZ_COMBO_MAX = 50;
+
+// Punkte für ein gelöstes Wort. combo zählt die gelösten Wörter in Folge (dieses mitgerechnet):
+// ab dem zweiten gibt es je +10 Bonus, höchstens +50.
+export function blitzPoints(guesses, combo = 1) {
+  const base = BLITZ_POINTS[guesses - 1] ?? 0;
+  if (!base) return 0;
+  return base + Math.min(BLITZ_COMBO_MAX, Math.max(0, combo - 1) * BLITZ_COMBO_STEP);
+}
+
+// Extrazeit in Sekunden für ein gelöstes Wort.
+export function blitzTimeBonus(guesses) {
+  return BLITZ_TIME_BONUS[guesses - 1] ?? 0;
+}
+
+// Übernimmt einen beendeten Durchgang in die Statistik.
+export function recordBlitzRun(stats, { score, words }) {
+  return {
+    ...stats,
+    best: Math.max(stats.best, words),
+    bestScore: Math.max(stats.bestScore, score),
+    runs: stats.runs + 1,
+    words: stats.words + words,
   };
 }
 
@@ -560,11 +597,14 @@ export function streakRanking(profiles, today) {
     .sort((a, b) => b.streak - a.streak || b.best - a.best || a.name.localeCompare(b.name, 'de'));
 }
 
-// Bestes Blitz-Ergebnis.
+// Höchste Punktzahl im Blitz (bei Gleichstand zählen mehr Wörter, dann weniger Durchgänge).
 export function blitzRanking(profiles) {
   return profiles
-    .map(({ id, name, data }) => ({ id, name, best: data.blitzStats.best, runs: data.blitzStats.runs }))
-    .sort((a, b) => b.best - a.best || a.runs - b.runs || a.name.localeCompare(b.name, 'de'));
+    .map(({ id, name, data }) => {
+      const { bestScore, best, runs } = data.blitzStats;
+      return { id, name, score: bestScore, words: best, runs };
+    })
+    .sort((a, b) => b.score - a.score || b.words - a.words || a.runs - b.runs || a.name.localeCompare(b.name, 'de'));
 }
 
 // Anzahl erreichter Abzeichen (bei Gleichstand zählen goldene, dann silberne mehr).
