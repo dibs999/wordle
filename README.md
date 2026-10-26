@@ -29,10 +29,14 @@ Mit Supabase (kostenloser Tarif) sind Profile und Statistiken auf allen Geräten
    **New project** → Name z. B. `wordle`, Region **Central EU (Frankfurt)**, ein Datenbank-Passwort
    generieren lassen (wird für das Spiel nicht gebraucht) → **Create new project**.
 2. **Tabelle anlegen:** Im Projekt links **SQL Editor** → **New query** → den kompletten Inhalt von
-   [`supabase/schema.sql`](supabase/schema.sql) einfügen → **Run**. Es sollte „Success“ erscheinen.
-3. **Zugangsdaten kopieren:** **Project Settings** → **API Keys** (bzw. **Data API**):
-   - **Project URL**, z. B. `https://abcdefgh.supabase.co`
-   - **Publishable key** (beginnt mit `sb_publishable_…`) oder den älteren **anon public** Key.
+   [`supabase/schema.sql`](supabase/schema.sql) einfügen → **Run**. Supabase warnt dann eventuell vor
+   „destructive operations“. Das ist normal: Das Skript ersetzt nur seine eigenen Zugriffsregeln und
+   löscht keine Daten. Mit **Run query** bestätigen. Danach erscheint „Success. No rows returned“.
+3. **Zugangsdaten kopieren:**
+   - **Project URL:** oben im Projekt auf **Connect** klicken (oder **Project Settings** → **Data API**).
+     Nur den Teil bis `.supabase.co` nehmen, z. B. `https://abcdefgh.supabase.co` – ohne `/rest/v1/`.
+   - **Publishable key:** **Project Settings** → **API Keys**. Er beginnt mit `sb_publishable_…`
+     (bei älteren Projekten heißt er **anon public**).
 
    ⚠️ Niemals den **secret** bzw. **service_role** Key verwenden – der gehört nicht in eine Webseite.
 4. **Eintragen:** In [`js/config.js`](js/config.js) beide Werte einsetzen:

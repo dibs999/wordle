@@ -23,13 +23,15 @@ import {
   createProfile,
   saveProfile,
   flushPending,
+  flushAllPending,
   hasPendingSave,
   cleanName,
+  timeValue,
+  onConflictMerged,
   listLocalOnlyProfiles,
   importLocalProfile,
 } from './store.js';
 
-const SOLUTION_SET = new Set(SOLUTIONS);
 const ALLOWED_SET = new Set([...ALLOWED, ...SOLUTIONS]);
 const LAST_PROFILE_KEY = 'wordle-de:last-profile';
 const THEME_KEY = 'wordle-de:theme';
@@ -65,6 +67,7 @@ const els = {
   board: $('board'),
   keyboard: $('keyboard'),
   toasts: $('toasts'),
+  srStatus: $('sr-status'),
   statsDialog: $('stats-dialog'),
   settingsDialog: $('settings-dialog'),
   hardMode: $('hard-mode'),
@@ -78,8 +81,14 @@ const state = {
   mode: 'daily',
   today: berlinDayKey(),
   current: [],
-  busy: false,
+  busy: false, // Wort wird gerade aufgedeckt
+  switching: false, // Profilwechsel läuft
+  selectToken: 0,
+  loadToken: 0,
+  localRevision: 0, // zählt lokale Änderungen, damit ein veralteter Serverstand sie nicht überschreibt
+  statsTimer: null,
   countdownTimer: null,
+  statsView: null, // Spiel, dessen Ergebnis der Statistik-Dialog gerade zeigt
 };
 
 // ---------- Hilfsfunktionen ----------
@@ -101,11 +110,13 @@ function writeSetting(key, value) {
   }
 }
 
+// Meldungen erscheinen im offenen Dialog, sonst über dem Spielfeld.
 function toast(message, duration = 1500) {
+  const host = document.querySelector('dialog[open] .toasts') || els.toasts;
   const el = document.createElement('div');
   el.className = 'toast';
   el.textContent = message;
-  els.toasts.prepend(el);
+  host.prepend(el);
   if (duration > 0) {
     setTimeout(() => {
       el.classList.add('is-hiding');
@@ -116,7 +127,15 @@ function toast(message, duration = 1500) {
 }
 
 function clearToasts() {
-  els.toasts.replaceChildren();
+  for (const host of document.querySelectorAll('.toasts')) host.replaceChildren();
+}
+
+// Für Screenreader: Ergebnis eines Versuchs vorlesen lassen.
+function announce(message) {
+  els.srStatus.textContent = '';
+  requestAnimationFrame(() => {
+    els.srStatus.textContent = message;
+  });
 }
 
 function avatarColor(name) {
@@ -132,6 +151,10 @@ function fillAvatar(el, name) {
 
 function openDialog(dialog) {
   if (!dialog.open) dialog.showModal();
+}
+
+function closeAllDialogs() {
+  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
 }
 
 // ---------- Profile ----------
@@ -253,19 +276,23 @@ function setProfileStatus(message, { error = false, retry = false } = {}) {
     button.className = 'button button-secondary';
     button.textContent = 'Erneut versuchen';
     button.style.marginTop = '0.8rem';
-    button.addEventListener('click', loadProfiles);
+    button.addEventListener('click', () => loadProfiles());
     els.profileStatus.append(document.createElement('br'), button);
   }
 }
 
-async function loadProfiles() {
-  setProfileStatus('Profile werden geladen …');
+async function loadProfiles({ quiet = false } = {}) {
+  const token = ++state.loadToken;
+  if (!quiet) setProfileStatus('Profile werden geladen …');
   try {
-    state.profiles = await listProfiles();
+    const profiles = await listProfiles();
+    if (token !== state.loadToken) return;
+    state.profiles = profiles;
     setProfileStatus('');
     renderProfiles();
     renderLocalImport();
   } catch (error) {
+    if (token !== state.loadToken || quiet) return;
     setProfileStatus(error.message || 'Profile konnten nicht geladen werden.', { error: true, retry: true });
   }
 }
@@ -273,7 +300,11 @@ async function loadProfiles() {
 function showProfileScreen() {
   closeAllDialogs();
   stopCountdown();
+  clearTimeout(state.statsTimer);
+  state.statsTimer = null;
+  state.selectToken += 1;
   state.profile = null;
+  state.current = [];
   els.gameScreen.hidden = true;
   els.profileScreen.hidden = false;
   document.title = 'Wordle Deutsch';
@@ -281,15 +312,21 @@ function showProfileScreen() {
 }
 
 async function selectProfile(id) {
+  const token = ++state.selectToken;
   let profile = state.profiles.find((p) => p.id === id);
   if (!profile) return;
   if (isCloud && !hasPendingSave(id)) {
     // Frisch laden, falls auf einem anderen Gerät inzwischen gespielt wurde.
+    const card = els.profileList.querySelector(`[data-id="${CSS.escape(id)}"]`);
+    card?.classList.add('is-loading');
     try {
       profile = (await fetchProfile(id)) || profile;
     } catch {
       // Offline: mit dem zuletzt geladenen Stand weiterspielen.
     }
+    card?.classList.remove('is-loading');
+    // Ein späterer Klick oder der Weg zurück zur Liste hat diese Auswahl überholt.
+    if (token !== state.selectToken) return;
   }
   state.profile = profile;
   writeSetting(LAST_PROFILE_KEY, id);
@@ -301,6 +338,7 @@ async function selectProfile(id) {
   els.gameScreen.hidden = false;
   fillAvatar(els.switchProfile.querySelector('.avatar'), profile.name);
   els.switchProfile.querySelector('.profile-chip-name').textContent = profile.name;
+  els.switchProfile.setAttribute('aria-label', `${profile.name} – Profil wechseln`);
   document.title = `Wordle Deutsch – ${profile.name}`;
   setMode(dailyDone ? 'endless' : 'daily');
   if (dailyDone) toast('Tagesrätsel heute schon gespielt ✓', 2200);
@@ -314,7 +352,7 @@ async function submitNewProfile(event) {
     return;
   }
   if (state.profiles.some((p) => p.name.toLocaleLowerCase('de') === name.toLocaleLowerCase('de'))) {
-    els.newProfileError.textContent = 'Diesen Namen gibt es schon.';
+    els.newProfileError.textContent = 'Diesen Namen gibt es schon. Wähle ihn in der Liste aus.';
     return;
   }
   const submit = els.newProfileForm.querySelector('[type="submit"]');
@@ -326,7 +364,13 @@ async function submitNewProfile(event) {
     els.newProfileDialog.close();
     await selectProfile(profile.id);
   } catch (error) {
-    els.newProfileError.textContent = error.message || 'Profil konnte nicht angelegt werden.';
+    if (error.code === 'duplicate') {
+      // Jemand anderes hat den Namen gerade angelegt: Liste auffrischen, damit das Profil sichtbar wird.
+      els.newProfileError.textContent = 'Diesen Namen gibt es schon. Wähle ihn in der Liste aus.';
+      if (isCloud) loadProfiles({ quiet: true });
+    } else {
+      els.newProfileError.textContent = error.message || 'Profil konnte nicht angelegt werden.';
+    }
   } finally {
     submit.disabled = false;
   }
@@ -335,11 +379,15 @@ async function submitNewProfile(event) {
 async function persist() {
   const profile = state.profile;
   if (!profile) return;
-  try {
-    const saved = await saveProfile(profile);
-    if (!saved) toast('Offline – wird gespeichert, sobald du wieder online bist', 2500);
-  } catch (error) {
-    toast(error.message || 'Speichern fehlgeschlagen', 2500);
+  state.localRevision += 1;
+  const result = await saveProfile(profile);
+  if (result.status === 'offline') {
+    toast('Offline – wird gespeichert, sobald du wieder online bist', 2500);
+  } else if (result.status === 'error') {
+    toast(`${result.error?.message || 'Speichern fehlgeschlagen'} Wird erneut versucht.`, 3000);
+  } else if (result.status === 'missing') {
+    toast('Dieses Profil gibt es nicht mehr.', 3000);
+    if (state.profile === profile && !state.busy) showProfileScreen();
   }
 }
 
@@ -348,9 +396,13 @@ async function persist() {
 function ensureGames() {
   const data = state.profile.data;
   if (!data.daily || data.daily.day !== state.today) {
-    data.daily = { day: state.today, guesses: [], status: 'playing' };
+    data.daily = { day: state.today, answer: dailyAnswer(state.today, SOLUTIONS), guesses: [], status: 'playing' };
+  } else if (!data.daily.answer) {
+    // Spielstände von vor dieser Version: bei einem Sieg ist der letzte Versuch die Lösung.
+    const lastGuess = data.daily.guesses[data.daily.guesses.length - 1];
+    data.daily.answer = data.daily.status === 'won' && lastGuess ? lastGuess : dailyAnswer(data.daily.day, SOLUTIONS);
   }
-  if (!data.endless || !SOLUTION_SET.has(data.endless.answer)) {
+  if (!data.endless) {
     data.endless = { answer: randomAnswer(SOLUTIONS), guesses: [], status: 'playing' };
   }
 }
@@ -360,7 +412,13 @@ function currentGame() {
 }
 
 function currentAnswer() {
-  return state.mode === 'daily' ? dailyAnswer(state.today, SOLUTIONS) : state.profile.data.endless.answer;
+  return currentGame().answer;
+}
+
+function gameIdentity() {
+  if (!state.profile) return '';
+  const game = currentGame();
+  return `${state.mode}:${game.day || ''}:${game.answer}:${game.guesses.length}:${game.status}`;
 }
 
 function startNextEndless() {
@@ -371,6 +429,8 @@ function startNextEndless() {
 function setMode(mode) {
   state.mode = mode;
   state.current = [];
+  clearTimeout(state.statsTimer);
+  state.statsTimer = null;
   if (mode === 'endless' && state.profile.data.endless.status !== 'playing') startNextEndless();
   for (const tab of document.querySelectorAll('.mode-tab')) {
     tab.setAttribute('aria-pressed', String(tab.dataset.mode === mode));
@@ -384,19 +444,35 @@ function setMode(mode) {
 // Erkennt Mitternacht (deutsche Zeit) und lädt dann das neue Tagesrätsel.
 function checkNewDay() {
   const today = berlinDayKey();
-  if (today === state.today) return;
+  // Während ein Wort aufgedeckt wird, später erneut prüfen.
+  if (today === state.today || state.busy) return;
   state.today = today;
   if (!state.profile) {
     if (!els.profileScreen.hidden) renderProfiles();
     return;
   }
-  if (state.busy) return;
   ensureGames();
+  els.dailyNumber.textContent = `#${puzzleNumber(state.today)}`;
   if (state.mode === 'daily') {
+    // Das Ergebnis von gestern nicht mehr anzeigen oder teilen.
+    if (els.statsDialog.open) els.statsDialog.close();
+    clearTimeout(state.statsTimer);
+    state.statsTimer = null;
     state.current = [];
     toast('Neues Tagesrätsel!', 2000);
+    renderBoard();
+    renderKeyboardStates();
   }
-  els.dailyNumber.textContent = `#${puzzleNumber(state.today)}`;
+}
+
+// Übernimmt einen Stand vom Server (oder aus einem Konflikt) und zeichnet neu.
+// Getippte Buchstaben bleiben erhalten, solange es dasselbe Spiel ist.
+function applyProfileUpdate() {
+  const before = gameIdentity();
+  ensureGames();
+  if (state.mode === 'endless' && state.profile.data.endless.status !== 'playing') startNextEndless();
+  if (gameIdentity() !== before) state.current = [];
+  if (state.busy) return;
   renderBoard();
   renderKeyboardStates();
 }
@@ -405,24 +481,23 @@ function checkNewDay() {
 async function refreshFromCloud() {
   const profile = state.profile;
   if (!isCloud || !profile) return;
-  const flushed = await flushPending(profile.id).catch(() => false);
-  if (!flushed || hasPendingSave(profile.id) || state.busy) return;
+  await flushPending(profile.id, profile).catch(() => null);
+  if (hasPendingSave(profile.id)) return;
+  const revision = state.localRevision;
   let remote;
   try {
     remote = await fetchProfile(profile.id);
   } catch {
     return;
   }
-  if (!remote || state.profile !== profile || state.busy) return;
-  const changed = JSON.stringify(remote.data) !== JSON.stringify(profile.data);
-  profile.updatedAt = remote.updatedAt;
-  if (!changed) return;
+  // Während des Ladens lokal weitergespielt: der geladene Stand ist dann veraltet.
+  if (!remote || state.profile !== profile || state.busy || state.localRevision !== revision || hasPendingSave(profile.id)) {
+    return;
+  }
+  if (timeValue(remote.updatedAt) <= timeValue(profile.updatedAt)) return;
   profile.data = remote.data;
-  ensureGames();
-  state.current = [];
-  if (state.mode === 'endless' && profile.data.endless.status !== 'playing') startNextEndless();
-  renderBoard();
-  renderKeyboardStates();
+  profile.updatedAt = remote.updatedAt;
+  applyProfileUpdate();
 }
 
 // ---------- Spielfeld ----------
@@ -487,13 +562,17 @@ function shakeRow() {
   row.addEventListener('animationend', () => row.classList.remove('shake'), { once: true });
 }
 
-function revealRow(rowIndex, guess, result) {
+// isCurrent() verhindert, dass ein laufendes Aufdecken auf ein inzwischen anderes Spielfeld malt.
+function revealRow(rowIndex, guess, result, isCurrent) {
   const tiles = rowTiles(rowIndex);
   const chars = letters(guess);
   tiles.forEach((tile, i) => {
     setTimeout(() => {
+      if (!isCurrent()) return;
       tile.classList.add('flip');
-      setTimeout(() => setTile(tile, chars[i], result[i], i + 1), FLIP_HALF);
+      setTimeout(() => {
+        if (isCurrent()) setTile(tile, chars[i], result[i], i + 1);
+      }, FLIP_HALF);
       tile.addEventListener('animationend', () => tile.classList.remove('flip'), { once: true });
     }, i * FLIP_STEP);
   });
@@ -562,7 +641,7 @@ function handleKey(key) {
 // ---------- Spielzüge ----------
 
 function inputBlocked() {
-  return state.busy || !state.profile || currentGame().status !== 'playing';
+  return state.busy || state.switching || !state.profile || currentGame().status !== 'playing';
 }
 
 function addLetter(letter) {
@@ -582,10 +661,16 @@ function removeLetter() {
 }
 
 async function submitGuess() {
-  if (inputBlocked()) return;
+  if (state.busy || state.switching || !state.profile) return;
   const game = currentGame();
+  if (game.status !== 'playing') {
+    // Im Endlos-Modus startet Enter nach einer Runde das nächste Wort.
+    if (state.mode === 'endless') nextRound();
+    return;
+  }
   const answer = currentAnswer();
   const guess = state.current.join('');
+  const hardMode = Boolean(state.profile.data.settings.hardMode);
 
   if (state.current.length < WORD_LENGTH) {
     shakeRow();
@@ -597,7 +682,7 @@ async function submitGuess() {
     toast('Kein gültiges Wort');
     return;
   }
-  if (state.profile.data.settings.hardMode) {
+  if (hardMode) {
     const violation = hardModeViolation(guess, game.guesses, answer);
     if (violation) {
       shakeRow();
@@ -605,6 +690,10 @@ async function submitGuess() {
       return;
     }
   }
+
+  // Merkt sich, ob die ganze Runde im schweren Modus gespielt wurde (für das Sternchen beim Teilen).
+  if (game.guesses.length === 0) game.hard = hardMode;
+  else if (!hardMode) game.hard = false;
 
   const rowIndex = game.guesses.length;
   const result = evaluateGuess(guess, answer);
@@ -622,37 +711,56 @@ async function submitGuess() {
     }
   }
 
+  const profile = state.profile;
   const mode = state.mode;
+  const isCurrent = () => state.profile === profile && state.mode === mode && currentGame() === game;
   state.busy = true;
   persist();
   renderBoard({ hideStateOfRow: rowIndex });
-  await revealRow(rowIndex, guess, result);
+  await revealRow(rowIndex, guess, result, isCurrent);
   state.busy = false;
-  if (state.mode !== mode || currentGame() !== game) return;
+  if (state.profile !== profile) return;
+  if (!isCurrent()) {
+    // Der Spielstand wurde inzwischen mit einem anderen Gerät zusammengeführt.
+    renderBoard();
+    renderKeyboardStates();
+    return;
+  }
   renderKeyboardStates();
+  announce(`Versuch ${rowIndex + 1}: ${letters(guess).map((ch, i) => `${ch} ${STATE_LABEL[result[i]]}`).join(', ')}`);
 
   if (won) {
     toast(PRAISE[rowIndex], 1800);
     bounceRow(rowIndex);
-    setTimeout(() => showStats({ fromGameEnd: true }), REDUCED_MOTION ? 600 : 1800);
+    scheduleStats(profile, mode, game, REDUCED_MOTION ? 600 : 1800);
   } else if (game.status === 'lost') {
     toast(answer, 2600);
-    setTimeout(() => showStats({ fromGameEnd: true }), 1800);
+    scheduleStats(profile, mode, game, 1800);
   }
+}
+
+function scheduleStats(profile, mode, game, delay) {
+  clearTimeout(state.statsTimer);
+  state.statsTimer = setTimeout(() => {
+    state.statsTimer = null;
+    if (state.profile !== profile || state.mode !== mode || currentGame() !== game) return;
+    showStats({ fromGameEnd: true });
+  }, delay);
 }
 
 // ---------- Statistik & Teilen ----------
 
 function shareText() {
-  const game = currentGame();
+  const { game, mode } = state.statsView;
   const score = game.status === 'won' ? game.guesses.length : 'X';
-  const hard = state.profile.data.settings.hardMode ? '*' : '';
-  const title = state.mode === 'daily' ? `Wordle Deutsch #${puzzleNumber(game.day)}` : 'Wordle Deutsch (Endlos)';
+  const hard = game.hard ? '*' : '';
+  const title = mode === 'daily' ? `Wordle Deutsch #${puzzleNumber(game.day)}` : 'Wordle Deutsch (Endlos)';
   const url = `${location.origin}${location.pathname}`;
-  return `${title} ${score}/6${hard}\n\n${shareGrid(game.guesses, currentAnswer())}\n\n${url}`;
+  return `${title} ${score}/6${hard}\n\n${shareGrid(game.guesses, game.answer)}\n\n${url}`;
 }
 
 async function share() {
+  if (!state.statsView) return;
   const text = shareText();
   const touch = window.matchMedia('(pointer: coarse)').matches;
   if (touch && navigator.share) {
@@ -707,12 +815,13 @@ function stopCountdown() {
 
 function showStats({ fromGameEnd = false } = {}) {
   if (!state.profile) return;
+  if (state.busy && !fromGameEnd) return;
   if (fromGameEnd && document.querySelector('dialog[open]')) return;
   const game = currentGame();
-  const answer = currentAnswer();
   const mode = state.mode;
   const stats = state.profile.data.stats[mode];
   const finished = game.status !== 'playing';
+  state.statsView = finished ? { game, mode } : null;
 
   $('stats-mode').textContent = mode === 'daily' ? '· Tagesrätsel' : '· Endlos';
   $('stat-played').textContent = stats.played;
@@ -740,8 +849,7 @@ function showStats({ fromGameEnd = false } = {}) {
   stopCountdown();
   if (finished) {
     $('result-title').textContent = game.status === 'won' ? 'Gewonnen!' : 'Leider verloren';
-    const word = $('result-word');
-    word.replaceChildren('Das Wort war: ', Object.assign(document.createElement('strong'), { textContent: answer }));
+    $('result-word').replaceChildren('Das Wort war: ', Object.assign(document.createElement('strong'), { textContent: game.answer }));
     $('next-button').textContent = mode === 'daily' ? 'Endlos spielen' : 'Nächstes Wort';
     $('countdown').hidden = mode !== 'daily';
     if (mode === 'daily') {
@@ -753,20 +861,26 @@ function showStats({ fromGameEnd = false } = {}) {
 }
 
 function nextRound() {
-  els.statsDialog.close();
-  if (state.mode === 'daily') {
-    setMode('endless');
-  } else {
-    startNextEndless();
-    setMode('endless');
-  }
+  if (state.busy || !state.profile) return;
+  if (els.statsDialog.open) els.statsDialog.close();
+  // setMode startet im Endlos-Modus automatisch ein neues Wort, wenn das letzte beendet ist.
+  setMode('endless');
 }
 
 // ---------- Einstellungen ----------
 
+function syncThemeColor() {
+  const theme = document.documentElement.dataset.theme;
+  for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
+    const dark = theme === 'dark' || (!theme && meta.media.includes('dark'));
+    meta.content = dark ? '#121213' : '#ffffff';
+  }
+}
+
 function applyTheme(value) {
   if (value === 'light' || value === 'dark') document.documentElement.dataset.theme = value;
   else delete document.documentElement.dataset.theme;
+  syncThemeColor();
 }
 
 function openSettings() {
@@ -779,19 +893,16 @@ function openSettings() {
 function toggleHardMode() {
   const profile = state.profile;
   if (!profile) return;
-  const game = currentGame();
   const enabling = els.hardMode.checked;
-  if (enabling && game.status === 'playing' && game.guesses.length > 0) {
+  const { daily, endless } = profile.data;
+  const midRound = [daily, endless].some((game) => game?.status === 'playing' && game.guesses.length > 0);
+  if (enabling && midRound) {
     els.hardMode.checked = false;
     toast('Nur zu Beginn einer Runde aktivierbar', 2000);
     return;
   }
   profile.data.settings.hardMode = enabling;
   persist();
-}
-
-function closeAllDialogs() {
-  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
 }
 
 // ---------- Ereignisse ----------
@@ -815,14 +926,23 @@ function bindEvents() {
   els.newProfileForm.addEventListener('submit', submitNewProfile);
 
   els.switchProfile.addEventListener('click', async () => {
-    if (state.busy) return;
-    if (state.profile) await flushPending(state.profile.id).catch(() => false);
+    if (state.busy || state.switching) return;
+    state.switching = true;
+    try {
+      if (state.profile) await flushPending(state.profile.id, state.profile).catch(() => null);
+    } finally {
+      state.switching = false;
+    }
     showProfileScreen();
   });
 
   for (const tab of document.querySelectorAll('.mode-tab')) {
     tab.addEventListener('click', () => {
-      if (!state.busy && tab.dataset.mode !== state.mode) setMode(tab.dataset.mode);
+      if (state.busy || state.switching || !state.profile) return;
+      const mode = tab.dataset.mode;
+      if (mode !== state.mode) setMode(mode);
+      // Nochmal auf "Endlos" tippen startet nach einer beendeten Runde das nächste Wort.
+      else if (mode === 'endless' && currentGame().status !== 'playing') setMode('endless');
     });
   }
 
@@ -831,17 +951,23 @@ function bindEvents() {
     if (key) handleKey(key.dataset.key);
   });
 
-  // Nach Mausklicks den Fokus lösen, damit Enter danach das Wort abschickt statt den Knopf erneut auszulösen.
-  els.gameScreen.addEventListener('click', (event) => {
-    const button = event.target.closest('button');
-    if (button && event.detail > 0) button.blur();
-  });
+  // Nach Mausklicks den Fokus lösen, bevor ein Dialog ihn sich merkt. Sonst würde Enter später
+  // den Knopf erneut auslösen, statt das Wort abzuschicken. Läuft daher in der Capture-Phase.
+  els.gameScreen.addEventListener(
+    'click',
+    (event) => {
+      const button = event.target.closest('button');
+      if (button && event.detail > 0) button.blur();
+    },
+    true,
+  );
 
   document.addEventListener('keydown', (event) => {
     if (els.gameScreen.hidden || document.querySelector('dialog[open]')) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target;
-    const onOtherControl = target instanceof HTMLElement && target.closest('button, input, select, textarea') && !target.closest('.key');
+    const onOtherControl =
+      target instanceof HTMLElement && target.closest('button, input, select, textarea') && !target.closest('.key');
 
     if (event.key === 'Enter') {
       if (onOtherControl) return;
@@ -869,13 +995,20 @@ function bindEvents() {
   }
 
   for (const dialog of document.querySelectorAll('dialog')) {
+    // Nur schließen, wenn der Klick auf dem abgedunkelten Hintergrund begonnen hat
+    // (nicht beim Markieren von Text, das außerhalb endet).
+    let pressedOnBackdrop = false;
+    dialog.addEventListener('pointerdown', (event) => {
+      pressedOnBackdrop = event.target === dialog;
+    });
     dialog.addEventListener('click', (event) => {
-      // Klick auf den abgedunkelten Hintergrund schließt den Dialog.
-      if (event.target === dialog) dialog.close();
+      if (event.target === dialog && pressedOnBackdrop) dialog.close();
+      pressedOnBackdrop = false;
     });
     for (const close of dialog.querySelectorAll('[data-close]')) {
       close.addEventListener('click', () => dialog.close());
     }
+    dialog.addEventListener('close', () => dialog.querySelector('.toasts')?.replaceChildren());
   }
   els.statsDialog.addEventListener('close', stopCountdown);
 
@@ -897,18 +1030,29 @@ function bindEvents() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     checkNewDay();
-    refreshFromCloud();
+    if (state.profile) refreshFromCloud();
+    else if (isCloud && !els.profileScreen.hidden) loadProfiles({ quiet: true });
   });
   window.addEventListener('online', () => {
-    if (state.profile) flushPending(state.profile.id).catch(() => false);
+    flushAllPending().then(() => {
+      if (!state.profile && !els.profileScreen.hidden) loadProfiles({ quiet: true });
+    });
   });
-  setInterval(checkNewDay, 30_000);
+  setInterval(() => {
+    checkNewDay();
+    if (state.profile && hasPendingSave(state.profile.id)) flushPending(state.profile.id, state.profile).catch(() => null);
+  }, 30_000);
+
+  onConflictMerged((profile) => {
+    if (profile === state.profile) applyProfileUpdate();
+  });
 }
 
 function init() {
   buildBoard();
   buildKeyboard();
   bindEvents();
+  syncThemeColor();
   els.localHint.hidden = isCloud;
   showProfileScreen();
 }

@@ -1,5 +1,5 @@
 // Zugangsdaten für Supabase (siehe README.md, Abschnitt "Profile geräteübergreifend speichern").
-// Beide Werte findest du im Supabase-Dashboard unter Project Settings → API.
+// URL: im Supabase-Dashboard oben "Connect" (nur bis ".supabase.co"), Schlüssel: Project Settings → API Keys.
 // Der "anon"/"publishable" Schlüssel ist öffentlich gedacht und darf im Code stehen.
 // Solange die Werte leer sind, werden Profile nur lokal in diesem Browser gespeichert.
 

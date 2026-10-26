@@ -1,4 +1,4 @@
-// Tests für die Spiellogik: node --test tests/
+// Tests für die Spiellogik: npm test  (oder: node --test tests/*.test.mjs)
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,6 +15,8 @@ import {
   currentDailyStreak,
   emptyStats,
   normalizeProfileData,
+  mergeProfileData,
+  emptyProfileData,
   shareGrid,
 } from '../js/game.js';
 import { SOLUTIONS, ALLOWED } from '../js/words.js';
@@ -45,6 +47,10 @@ test('schwerer Modus verlangt grüne und gelbe Buchstaben', () => {
   assert.equal(hardModeViolation('TIGER', ['PILOT'], 'TITEL'), 'Wort muss L enthalten');
   assert.equal(hardModeViolation('ESSEN', ['PILOT'], 'TITEL'), '2. Buchstabe muss I sein');
   assert.equal(hardModeViolation('NIXEN', ['PILOT'], 'TITEL'), 'Wort muss L enthalten');
+  // Zwei gelbe/grüne E verlangen zwei E im nächsten Versuch.
+  assert.equal(hardModeViolation('ENKEL', ['EBENE'], 'ESSEN'), null);
+  assert.equal(hardModeViolation('ELFEN', ['EBENE'], 'ESSEN'), null);
+  assert.equal(hardModeViolation('EXTRA', ['EBENE'], 'ESSEN'), 'Wort muss 2× E enthalten');
 });
 
 test('Tastatur zeigt den besten bekannten Zustand', () => {
@@ -70,6 +76,11 @@ test('Tageswort ist fest und wechselt täglich', () => {
   const a = dailyAnswer('2026-10-26', SOLUTIONS);
   assert.equal(dailyAnswer('2026-10-26', SOLUTIONS), a);
   assert.ok(SOLUTIONS.includes(a));
+  // Die Liste steht in Tagesreihenfolge: Tag 1 ist das erste Wort.
+  assert.equal(dailyAnswer('2026-01-01', SOLUTIONS), SOLUTIONS[0]);
+  assert.equal(dailyAnswer(shiftDayKey('2026-01-01', SOLUTIONS.length), SOLUTIONS), SOLUTIONS[0]);
+  // Ein angehängtes Wort verschiebt die bisherigen Tage nicht.
+  assert.equal(dailyAnswer('2026-10-26', [...SOLUTIONS, 'XXXXX']), a);
   const days = Array.from({ length: 60 }, (_, i) => dailyAnswer(shiftDayKey('2026-10-26', i), SOLUTIONS));
   assert.equal(new Set(days).size, days.length);
 });
@@ -107,6 +118,41 @@ test('kaputte Profildaten werden aufgefüllt', () => {
   assert.deepEqual(data.stats.endless, emptyStats());
   assert.equal(data.settings.hardMode, false);
   assert.equal(normalizeProfileData(null).version, 1);
+});
+
+test('ungültige Spielstände werden verworfen', () => {
+  const data = normalizeProfileData({ daily: { day: 5, guesses: 'x' }, endless: { answer: 'APFEL', guesses: ['LEBEN', 3], status: '?' } });
+  assert.equal(data.daily, null);
+  assert.deepEqual(data.endless.guesses, ['LEBEN']);
+  assert.equal(data.endless.status, 'playing');
+});
+
+test('Zusammenführen zweier Geräte verliert keine Runde', () => {
+  const remote = emptyProfileData();
+  remote.daily = { day: '2026-10-26', answer: 'APFEL', guesses: ['LEBEN', 'APFEL'], status: 'won' };
+  remote.stats.daily = recordDailyResult(remote.stats.daily, '2026-10-26', true, 2);
+  remote.endless = { answer: 'TISCH', guesses: [], status: 'playing' };
+
+  // Veraltetes Gerät: Tagesrätsel von gestern, dafür eine laufende Endlos-Runde.
+  const local = emptyProfileData();
+  local.daily = { day: '2026-10-25', answer: 'BLUME', guesses: ['BLUME'], status: 'won' };
+  local.endless = { answer: 'KATZE', guesses: ['KANNE'], status: 'playing' };
+  local.settings.hardMode = true;
+
+  const merged = mergeProfileData(remote, local);
+  assert.equal(merged.daily.day, '2026-10-26');
+  assert.equal(merged.daily.status, 'won');
+  assert.equal(merged.stats.daily.played, 1);
+  assert.equal(merged.endless.answer, 'KATZE');
+  assert.equal(merged.settings.hardMode, true);
+
+  // Gleiches Spiel: der weiter fortgeschrittene Stand gewinnt.
+  const a = emptyProfileData();
+  a.daily = { day: '2026-10-26', answer: 'APFEL', guesses: ['LEBEN'], status: 'playing' };
+  const b = emptyProfileData();
+  b.daily = { day: '2026-10-26', answer: 'APFEL', guesses: ['LEBEN', 'ESSEN'], status: 'playing' };
+  assert.equal(mergeProfileData(b, a).daily.guesses.length, 2);
+  assert.equal(mergeProfileData(a, b).daily.guesses.length, 2);
 });
 
 test('Teilen-Raster', () => {

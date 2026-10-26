@@ -56,7 +56,7 @@ export function hardModeViolation(guess, previousGuesses, answer) {
     }
     for (const [letter, count] of required) {
       const have = g.filter((l) => l === letter).length;
-      if (have < count) return `Wort muss ${letter} enthalten`;
+      if (have < count) return count > 1 ? `Wort muss ${count}× ${letter} enthalten` : `Wort muss ${letter} enthalten`;
     }
   }
   return null;
@@ -104,36 +104,10 @@ export function puzzleNumber(dayKey) {
   return dayNumber(dayKey) + 1;
 }
 
-function mulberry32(seed) {
-  return function next() {
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-const orderCache = new WeakMap();
-
-// Feste, gemischte Reihenfolge der Lösungswörter, damit das Tageswort nicht alphabetisch vorhersehbar ist.
-function shuffledSolutions(solutions) {
-  let order = orderCache.get(solutions);
-  if (!order) {
-    order = [...solutions].sort();
-    const random = mulberry32(20260101);
-    for (let i = order.length - 1; i > 0; i--) {
-      const j = Math.floor(random() * (i + 1));
-      [order[i], order[j]] = [order[j], order[i]];
-    }
-    orderCache.set(solutions, order);
-  }
-  return order;
-}
-
+// Die Lösungsliste steht bereits in Tagesreihenfolge (siehe js/words.js).
 export function dailyAnswer(dayKey, solutions) {
-  const order = shuffledSolutions(solutions);
   const n = dayNumber(dayKey);
-  return order[((n % order.length) + order.length) % order.length];
+  return solutions[((n % solutions.length) + solutions.length) % solutions.length];
 }
 
 export function randomAnswer(solutions, exclude) {
@@ -197,6 +171,23 @@ export function emptyProfileData() {
   };
 }
 
+function normalizeGame(game, keyField) {
+  if (!game || typeof game !== 'object' || typeof game[keyField] !== 'string' || !Array.isArray(game.guesses)) {
+    return null;
+  }
+  return {
+    ...game,
+    guesses: game.guesses.filter((guess) => typeof guess === 'string').slice(0, MAX_GUESSES),
+    status: ['playing', 'won', 'lost'].includes(game.status) ? game.status : 'playing',
+  };
+}
+
+function normalizeStats(stats) {
+  const next = { ...emptyStats(), ...(stats && typeof stats === 'object' ? stats : {}) };
+  if (!Array.isArray(next.dist) || next.dist.length !== MAX_GUESSES) next.dist = emptyStats().dist;
+  return next;
+}
+
 // Ergänzt fehlende Felder, damit ältere oder beschädigte Datensätze das Spiel nicht abstürzen lassen.
 export function normalizeProfileData(data) {
   const base = emptyProfileData();
@@ -204,11 +195,54 @@ export function normalizeProfileData(data) {
   return {
     ...base,
     ...data,
+    daily: normalizeGame(data.daily, 'day'),
+    endless: normalizeGame(data.endless, 'answer'),
     stats: {
-      daily: { ...emptyStats(), ...(data.stats?.daily || {}) },
-      endless: { ...emptyStats(), ...(data.stats?.endless || {}) },
+      daily: normalizeStats(data.stats?.daily),
+      endless: normalizeStats(data.stats?.endless),
     },
     settings: { ...base.settings, ...(data.settings || {}) },
+  };
+}
+
+function progress(game) {
+  if (!game) return -1;
+  return game.guesses.length + (game.status === 'playing' ? 0 : MAX_GUESSES + 1);
+}
+
+function pickDaily(remote, local) {
+  if (!remote || !local) return local || remote;
+  if (remote.day !== local.day) return remote.day > local.day ? remote : local;
+  return progress(local) >= progress(remote) ? local : remote;
+}
+
+function pickEndless(remote, local) {
+  if (!remote || !local) return local || remote;
+  if (remote.answer === local.answer) return progress(local) >= progress(remote) ? local : remote;
+  const active = (game) => game.status === 'playing' && game.guesses.length > 0;
+  return active(remote) && !active(local) ? remote : local;
+}
+
+// Statistiken zählen nur hoch: die mit mehr gespielten Runden enthält die neueren Ergebnisse.
+function pickStats(remote, local) {
+  return local.played >= remote.played ? local : remote;
+}
+
+// Führt zwei Stände desselben Profils zusammen, wenn zwei Geräte gleichzeitig gespeichert haben.
+// Pro Teil gewinnt der weiter fortgeschrittene Stand, damit keine Runde verloren geht.
+export function mergeProfileData(remoteData, localData) {
+  const remote = normalizeProfileData(remoteData);
+  const local = normalizeProfileData(localData);
+  return {
+    ...remote,
+    ...local,
+    daily: pickDaily(remote.daily, local.daily),
+    endless: pickEndless(remote.endless, local.endless),
+    stats: {
+      daily: pickStats(remote.stats.daily, local.stats.daily),
+      endless: pickStats(remote.stats.endless, local.stats.endless),
+    },
+    settings: local.settings,
   };
 }
 

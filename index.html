@@ -13,7 +13,12 @@
     // Design vor dem ersten Zeichnen setzen, damit die Seite nicht kurz hell aufblitzt.
     try {
       var theme = localStorage.getItem('wordle-de:theme');
-      if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+      if (theme === 'light' || theme === 'dark') {
+        document.documentElement.dataset.theme = theme;
+        document.querySelectorAll('meta[name="theme-color"]').forEach(function (meta) {
+          meta.content = theme === 'dark' ? '#121213' : '#ffffff';
+        });
+      }
       if (localStorage.getItem('wordle-de:contrast') === '1') document.documentElement.dataset.contrast = 'high';
     } catch (e) {}
   </script>
@@ -70,6 +75,7 @@
 
     <main class="game-main">
       <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+      <div id="sr-status" class="sr-only" aria-live="polite" aria-atomic="true"></div>
       <div id="board" class="board" role="grid" aria-label="Spielfeld"></div>
     </main>
 
@@ -78,6 +84,7 @@
 
   <!-- Neues Profil -->
   <dialog id="new-profile-dialog" class="dialog" aria-labelledby="new-profile-title">
+    <div class="toasts dialog-toasts" role="status" aria-live="polite"></div>
     <form id="new-profile-form" method="dialog" class="dialog-body" novalidate>
       <button class="dialog-close" type="button" data-close aria-label="Schließen">×</button>
       <h2 id="new-profile-title">Neues Profil</h2>
@@ -92,6 +99,7 @@
 
   <!-- Spielregeln -->
   <dialog id="help-dialog" class="dialog" aria-labelledby="help-title">
+    <div class="toasts dialog-toasts" role="status" aria-live="polite"></div>
     <div class="dialog-body">
       <button class="dialog-close" type="button" data-close aria-label="Schließen">×</button>
       <h2 id="help-title">So wird gespielt</h2>
@@ -122,6 +130,7 @@
 
   <!-- Statistik -->
   <dialog id="stats-dialog" class="dialog" aria-labelledby="stats-title">
+    <div class="toasts dialog-toasts" role="status" aria-live="polite"></div>
     <div class="dialog-body">
       <button class="dialog-close" type="button" data-close aria-label="Schließen">×</button>
       <div id="result-section" class="result-section" hidden>
@@ -147,6 +156,7 @@
 
   <!-- Einstellungen -->
   <dialog id="settings-dialog" class="dialog" aria-labelledby="settings-title">
+    <div class="toasts dialog-toasts" role="status" aria-live="polite"></div>
     <div class="dialog-body">
       <button class="dialog-close" type="button" data-close aria-label="Schließen">×</button>
       <h2 id="settings-title">Einstellungen</h2>
