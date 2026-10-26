@@ -1030,6 +1030,35 @@ button {
   border: 0;
 }
 
+/* ---------- Hinweis und Blitz ---------- */
+
+.hint-button {
+  display: block;
+  min-height: 36px;
+  margin: 6px auto 0;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 2px solid var(--line);
+  box-shadow: 0 3px 0 var(--surface-edge);
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.hint-button:disabled {
+  opacity: 0.55;
+  box-shadow: none;
+}
+
+.variant-caption.is-message {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.blitz-stats {
+  grid-template-columns: 1fr 1fr;
+}
+
 /* ---------- Abzeichen ---------- */
 
 .achievement-list {
@@ -1628,6 +1657,11 @@ button {
 }
 
 @media (max-width: 360px) {
+  /* Die Tagesnummer am Reiter braucht Platz, damit auch der Blitz-Reiter sichtbar bleibt. */
+  #daily-number {
+    display: none;
+  }
+
   .lt {
     width: 40px;
     height: 40px;
@@ -1672,7 +1706,7 @@ button {
 }
 
 @media (orientation: landscape) and (max-height: 520px) {
-  .variant-caption {
+  .variant-caption:not(.is-message) {
     display: none;
   }
 }
@@ -1758,7 +1792,8 @@ button {
     font-size: 18px;
   }
 
-  .variant-caption {
+  /* Im Querformat nur Meldungen zeigen (Blitz-Stand, Hinweis), Namen und Erklärungen sparen den Platz. */
+  .variant-caption:not(.is-message) {
     display: none;
   }
 
@@ -1786,6 +1821,12 @@ button {
 @media (orientation: landscape) and (max-height: 520px) and (max-width: 620px) {
   .mode-tab .num {
     display: none;
+  }
+
+  /* Vier Reiter nebeneinander in der linken Spalte: etwas kleiner, damit keiner abgeschnitten wird. */
+  .mode-tab {
+    padding-inline: 3px;
+    font-size: 12.5px;
   }
 }
 

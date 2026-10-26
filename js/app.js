@@ -28,6 +28,7 @@ import {
   streakRanking,
   formatDuration,
   achievements,
+  hintPosition,
 } from './game.js';
 import { burstConfetti } from './fx.js';
 import {
@@ -64,6 +65,8 @@ const KEY_ROWS = [
   ['ENTER', 'Y', 'X', 'C', 'V', 'B', 'N', 'M', 'BACKSPACE'],
 ];
 const STATE_LABEL = { correct: 'richtig', present: 'an anderer Stelle', absent: 'nicht im Wort' };
+const BLITZ_SECONDS = 60;
+const BLITZ_PAUSE = 1300;
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -96,6 +99,8 @@ const els = {
   rankingDialog: $('ranking-dialog'),
   rankingDaily: $('ranking-daily'),
   rankingStreak: $('ranking-streak'),
+  variantChips: $('variant-chips'),
+  hintButton: $('hint-button'),
   achievementList: $('achievement-list'),
   themeSelect: $('theme-select'),
 };
@@ -116,6 +121,8 @@ const state = {
   statsView: null, // Spiel, dessen Ergebnis der Statistik-Dialog gerade zeigt
   boardShape: '',
   boardIdentity: '',
+  blitzRound: null, // Wort des laufenden Blitz-Durchgangs (wird nicht gespeichert)
+  blitz: null, // laufender Durchgang: Ende, Punkte und Zeitgeber
 };
 
 // ---------- Hilfsfunktionen ----------
@@ -346,6 +353,8 @@ function replaceListedProfile(profile) {
 }
 
 function showProfileScreen() {
+  // Ein laufender Blitz-Durchgang wird zuerst beendet, solange das Profil noch ausgewählt ist.
+  finishBlitz();
   closeAllDialogs();
   stopCountdown();
   clearTimeout(state.statsTimer);
@@ -496,6 +505,8 @@ function ensureGames() {
 
 function currentGame() {
   const data = state.profile.data;
+  // Das Blitz-Wort wird nicht gespeichert, es gehört nur zum laufenden Durchgang.
+  if (state.mode === 'blitz') return state.blitzRound;
   if (state.mode === 'daily') return data.daily;
   if (state.mode === 'endless') return data.endless;
   return data.extreme[extremeVariant()];
@@ -518,6 +529,7 @@ function rowFeedback(game, row) {
 // Kennung des Spiels auf dem Bildschirm, um nach einem Abgleich zu erkennen, ob es noch dasselbe ist.
 function gameIdentity(data = state.profile?.data) {
   if (!data) return '';
+  if (state.mode === 'blitz') return `blitz:${state.blitzRound?.guesses.length ?? 0}:${state.blitzRound?.status ?? ''}`;
   const game =
     state.mode === 'daily' ? data.daily : state.mode === 'endless' ? data.endless : data.extreme?.[data.settings?.extremeVariant];
   if (!game) return state.mode;
@@ -536,10 +548,14 @@ function startNextRound() {
 }
 
 function setMode(mode) {
+  // Ein laufender Blitz-Durchgang endet beim Wechsel still, sein Ergebnis wird trotzdem gespeichert.
+  if (state.mode === 'blitz' && mode !== 'blitz') finishBlitz();
   state.mode = mode;
   state.current = [];
   clearTimeout(state.statsTimer);
   state.statsTimer = null;
+  // Blitz beginnt jedes Mal mit einem frischen Wort.
+  if (mode === 'blitz') state.blitzRound = newBlitzRound();
   ensureGames();
   if (mode !== 'daily' && currentGame().status !== 'playing') {
     startNextRound();
@@ -559,7 +575,9 @@ function syncModeChrome() {
   for (const chip of document.querySelectorAll('.variant-chip')) {
     chip.setAttribute('aria-pressed', String(chip.dataset.variant === extremeVariant()));
   }
-  els.variantBar.hidden = state.mode !== 'extreme';
+  els.variantChips.hidden = state.mode !== 'extreme';
+  els.hintButton.hidden = state.mode !== 'endless' && state.mode !== 'blitz';
+  els.variantBar.hidden = state.mode === 'daily';
 }
 
 function renderAll() {
@@ -569,16 +587,28 @@ function renderAll() {
   renderCaption();
 }
 
+// Beschriftung unter den Reitern: Extrem-Erklärung, Blitz-Stand und ein Hinweis, falls genutzt.
 function renderCaption() {
-  if (state.mode !== 'extreme') return;
-  const variant = extremeVariant();
   const game = currentGame();
-  let text = EXTREME_VARIANTS[variant].caption;
-  if (variant === 'devil' && game.status === 'playing' && game.guesses.length > 0) {
-    const left = devilCandidates(game, SOLUTIONS).length;
-    text = left === 1 ? 'Nur noch ein Wort möglich!' : `Noch ${left} Wörter möglich.`;
+  let text = '';
+  if (state.mode === 'extreme') {
+    const variant = extremeVariant();
+    text = EXTREME_VARIANTS[variant].caption;
+    if (variant === 'devil' && game.status === 'playing' && game.guesses.length > 0) {
+      const left = devilCandidates(game, SOLUTIONS).length;
+      text = left === 1 ? 'Nur noch ein Wort möglich!' : `Noch ${left} Wörter möglich.`;
+    }
+  } else if (state.mode === 'blitz') {
+    text = blitzStatus();
+  }
+  if (game.hint && game.status === 'playing') {
+    const hint = `💡 Der ${game.hint.pos + 1}. Buchstabe ist ${game.hint.letter}.`;
+    text = [text, hint].filter(Boolean).join('  ·  ');
   }
   els.variantCaption.textContent = text;
+  els.variantCaption.classList.toggle('is-message', state.mode === 'blitz' || Boolean(game.hint));
+  els.hintButton.disabled = game.status !== 'playing' || Boolean(game.hint);
+  els.hintButton.textContent = game.hint ? '💡 Hinweis genutzt' : '💡 Hinweis';
 }
 
 // Erkennt Mitternacht (deutsche Zeit) und lädt dann das neue Tagesrätsel.
@@ -836,6 +866,7 @@ function addLetter(letter) {
   void tile.offsetWidth;
   tile.classList.add('pop');
   playTap();
+  if (state.mode === 'blitz' && !state.blitz) startBlitzRun();
 }
 
 function removeLetter() {
@@ -864,6 +895,8 @@ async function submitGuess() {
   if (game.status !== 'playing') {
     // Im Endlos- und Extrem-Modus startet Enter nach einer Runde das nächste Wort
     // (erst wenn das Ergebnis angezeigt wurde).
+    // Im Blitz geht es nach jedem Wort von selbst weiter.
+    if (state.mode === 'blitz') return;
     if (state.mode !== 'daily' && !state.statsTimer) nextRound();
     return;
   }
@@ -898,7 +931,8 @@ async function submitGuess() {
   if (firstGuess) game.startedAt = Date.now();
   if (game.status !== 'playing') game.finishedAt = Date.now();
 
-  if (game.status !== 'playing') {
+  // Blitz-Wörter gehen nicht in die normale Statistik ein, sondern in den Bestwert des Durchgangs.
+  if (game.status !== 'playing' && state.mode !== 'blitz') {
     const stats = state.profile.data.stats;
     if (state.mode === 'daily') {
       stats.daily = recordDailyResult(stats.daily, game.day, won, game.guesses.length);
@@ -913,9 +947,10 @@ async function submitGuess() {
 
   const profile = state.profile;
   const mode = state.mode;
+  const blitzRun = mode === 'blitz' ? state.blitz : null;
   const isCurrent = () => state.profile === profile && state.mode === mode && currentGame() === game;
   state.busy = true;
-  persist();
+  if (mode !== 'blitz') persist();
   renderBoard({ hideStateOfRow: rowIndex });
   await revealRow(rowIndex, guess, feedback, isCurrent);
   state.busy = false;
@@ -928,6 +963,10 @@ async function submitGuess() {
   renderKeyboardStates();
   renderCaption();
   announce(`Versuch ${rowIndex + 1}: ${describeFeedback(guess, feedback)}`);
+  if (mode === 'blitz') {
+    afterBlitzWord(blitzRun, won, game.answer);
+    return;
+  }
 
   if (won) {
     toast(praise(rowIndex), 1800);
@@ -1029,6 +1068,11 @@ function showStats({ fromGameEnd = false } = {}) {
   if (!state.profile) return;
   if (state.busy && !fromGameEnd) return;
   if (fromGameEnd && document.querySelector('dialog[open]')) return;
+  if (state.mode === 'blitz') {
+    showBlitzStats();
+    return;
+  }
+  setBlitzView(false);
   const game = currentGame();
   const mode = state.mode;
   const variant = mode === 'extreme' ? extremeVariant() : null;
@@ -1091,6 +1135,122 @@ function showStats({ fromGameEnd = false } = {}) {
       state.countdownTimer = setInterval(updateCountdown, 1000);
     }
   }
+  openDialog(els.statsDialog);
+}
+
+// ---------- Hinweis und Blitz ----------
+
+// Hinweis: zeigt einen Buchstaben, den man noch nicht an der richtigen Stelle hat. Einmal pro Runde.
+function giveHint() {
+  const game = currentGame();
+  const hintMode = state.mode === 'endless' || state.mode === 'blitz';
+  if (!hintMode || state.busy || game.status !== 'playing' || game.hint) return;
+  const pos = hintPosition(game);
+  game.hint = { pos, letter: letters(game.answer)[pos] };
+  if (state.mode === 'endless') persist();
+  renderCaption();
+}
+
+function newBlitzRound() {
+  return { answer: randomAnswer(SOLUTIONS, state.blitzRound?.answer), guesses: [], status: 'playing' };
+}
+
+function blitzSeconds() {
+  return Math.max(0, Math.ceil((state.blitz.endsAt - Date.now()) / 1000));
+}
+
+function blitzStatus() {
+  if (state.blitz?.running) return `⏱ ${blitzSeconds()} s · ${state.blitz.score} gelöst`;
+  if (state.blitzRound?.status === 'over') return '';
+  return `Tippe los! ${BLITZ_SECONDS} Sekunden, so viele Wörter wie möglich.`;
+}
+
+// Der Durchgang beginnt mit dem ersten Buchstaben.
+function startBlitzRun() {
+  state.blitz = { running: true, endsAt: Date.now() + BLITZ_SECONDS * 1000, score: 0, timer: null };
+  state.blitz.timer = setInterval(tickBlitz, 250);
+  renderCaption();
+}
+
+function tickBlitz() {
+  if (!state.blitz?.running) return;
+  // Während ein Wort aufgedeckt wird, endet der Durchgang erst danach.
+  if (Date.now() >= state.blitz.endsAt && !state.busy) {
+    finishBlitz({ show: true });
+    return;
+  }
+  renderCaption();
+}
+
+// Beendet den Durchgang und speichert Bestwert und Anzahl der Durchgänge.
+function finishBlitz({ show = false } = {}) {
+  const run = state.blitz;
+  if (!run?.running) return;
+  run.running = false;
+  clearInterval(run.timer);
+  state.blitz = null;
+  if (state.blitzRound?.status === 'playing') state.blitzRound.status = 'over';
+  renderCaption();
+  const stats = state.profile?.data.blitzStats;
+  if (!stats) return;
+  const previousBest = stats.best;
+  stats.best = Math.max(stats.best, run.score);
+  stats.runs += 1;
+  persist();
+  if (show) showBlitzStats({ score: run.score, isNewBest: run.score > 0 && run.score > previousBest });
+}
+
+function nextBlitzRound() {
+  if (!state.blitz?.running || state.mode !== 'blitz') return;
+  state.blitzRound = newBlitzRound();
+  state.current = [];
+  renderAll();
+}
+
+// Nach jedem Wort im Blitz: Punkt bei Sieg, die Lösung bei Niederlage, dann kurz Pause und das nächste Wort.
+function afterBlitzWord(run, won, answer) {
+  if (won) {
+    if (run?.running) run.score += 1;
+    toast('+1 🎉', 1200);
+    burstConfetti({ count: 30, duration: 1200 });
+    playWin();
+  } else {
+    toast(answer, 1800);
+    playLose();
+  }
+  renderCaption();
+  if (run?.running) setTimeout(nextBlitzRound, BLITZ_PAUSE);
+}
+
+// Im Statistik-Dialog stehen im Blitz Bestwert und Durchgänge statt der normalen Zahlen.
+function setBlitzView(on) {
+  $('blitz-stats').hidden = !on;
+  $('stats-numbers').hidden = on;
+  $('distribution').hidden = on;
+  $('distribution-title').hidden = on;
+  $('share-button').hidden = on;
+  $('duden-link').hidden = on;
+}
+
+function showBlitzStats(result = null) {
+  setBlitzView(true);
+  const { best, runs } = state.profile.data.blitzStats;
+  $('blitz-best').textContent = best;
+  $('blitz-runs').textContent = runs;
+  $('stats-mode').textContent = 'Blitz';
+  $('result-section').hidden = !result;
+  $('countdown').hidden = true;
+  stopCountdown();
+  state.statsView = null;
+  if (result) {
+    $('result-title').textContent = 'Blitz vorbei! ⏱';
+    $('result-tiles').replaceChildren();
+    let message = `${result.score} ${result.score === 1 ? 'Wort' : 'Wörter'} gelöst.`;
+    if (result.isNewBest) message += ' Neue Bestzeit! 🎉';
+    $('result-word').textContent = message;
+    $('next-label').textContent = 'Nochmal';
+  }
+  renderAchievements();
   openDialog(els.statsDialog);
 }
 
@@ -1197,6 +1357,7 @@ function bindEvents() {
   });
 
   els.rankingButton.addEventListener('click', openRanking);
+  els.hintButton.addEventListener('click', giveHint);
   els.newProfileButton.addEventListener('click', () => {
     els.newProfileForm.reset();
     els.newProfileError.textContent = '';
@@ -1220,6 +1381,8 @@ function bindEvents() {
     tab.addEventListener('click', () => {
       if (state.busy || state.switching || !state.profile) return;
       const mode = tab.dataset.mode;
+      // Ein laufender Blitz-Durchgang darf nicht durch Antippen des Reiters neu beginnen.
+      if (mode === 'blitz' && state.mode === 'blitz' && state.blitz?.running) return;
       if (mode !== state.mode) setMode(mode);
       // Nochmal auf den Reiter tippen startet nach einer beendeten Runde das nächste Wort.
       else if (mode !== 'daily' && currentGame().status !== 'playing' && !state.statsTimer) setMode(mode);

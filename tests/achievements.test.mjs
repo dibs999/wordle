@@ -8,7 +8,7 @@ const earnedIds = (data) => achievements(data).filter((a) => a.earned).map((a) =
 
 test('neues Profil hat kein Abzeichen', () => {
   const list = achievements(emptyProfileData());
-  assert.equal(list.length, 11);
+  assert.equal(list.length, 12);
   assert.deepEqual(earnedIds(emptyProfileData()), []);
 });
 

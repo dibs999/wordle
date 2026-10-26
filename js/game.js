@@ -330,8 +330,18 @@ export function emptyProfileData() {
     extreme: {},
     stats: { daily: emptyStats(), endless: emptyStats() },
     extremeStats: emptyExtremeStats(),
+    // Blitz: meiste gelöste Wörter in einem Durchgang und Anzahl der Durchgänge.
+    blitzStats: { best: 0, runs: 0 },
     settings: { extremeVariant: 'devil' },
   };
+}
+
+// Position für einen Hinweis: ein Buchstabe, den man noch nicht an der richtigen Stelle hat.
+export function hintPosition(game, random = Math.random) {
+  const answer = letters(game.answer);
+  const open = answer.map((_, i) => i).filter((i) => !game.guesses.some((guess) => letters(guess)[i] === answer[i]));
+  const pool = open.length ? open : answer.map((_, i) => i);
+  return pool[Math.floor(random() * pool.length)];
 }
 
 function normalizeExtremeGame(game, variant) {
@@ -388,6 +398,10 @@ export function normalizeProfileData(data) {
     stats: {
       daily: normalizeStats(data.stats?.daily),
       endless: normalizeStats(data.stats?.endless),
+    },
+    blitzStats: {
+      best: Number(data.blitzStats?.best) || 0,
+      runs: Number(data.blitzStats?.runs) || 0,
     },
     // Übernimmt auch die kurzzeitig unter stats.extreme gespeicherte Statistik (die mit mehr Runden gilt).
     extremeStats: Object.fromEntries(
@@ -522,6 +536,11 @@ export function mergeProfileData(remoteData, localData, baseCounts = null) {
     extremeStats: Object.fromEntries(
       EXTREME_KEYS.map((key) => [key, mergeCounts(remote.extremeStats[key], local.extremeStats[key], base?.extremeStats[key])]),
     ),
+    // Bestwerte und Anzahl der Durchgänge: jeweils der höhere Stand (ein Durchgang kann dabei zählen, aber nie verloren gehen).
+    blitzStats: {
+      best: Math.max(remote.blitzStats.best, local.blitzStats.best),
+      runs: Math.max(remote.blitzStats.runs, local.blitzStats.runs),
+    },
     settings: local.settings,
   };
 }
@@ -641,6 +660,13 @@ export const ACHIEVEMENTS = [
     title: 'Alle Extreme',
     text: 'Jede Extrem-Variante mindestens einmal gewonnen.',
     earned: (d) => EXTREME_KEYS.every((key) => d.extremeStats[key].won >= 1),
+  },
+  {
+    id: 'blitz-10',
+    icon: '⏱️',
+    title: 'Blitzschnell',
+    text: '10 Wörter in einem Blitz-Durchgang gelöst.',
+    earned: (d) => d.blitzStats.best >= 10,
   },
 ];
 
