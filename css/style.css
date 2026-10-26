@@ -118,8 +118,9 @@ button {
   margin: 0;
   font-family: "Karnak Condensed", Georgia, "Times New Roman", serif;
   font-weight: 700;
-  font-size: 2.6rem;
+  font-size: clamp(2rem, 9vw, 2.6rem);
   letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
 .logo span {
@@ -367,7 +368,7 @@ button {
   min-height: 0;
   max-width: 520px;
   margin: 0 auto;
-  padding-bottom: env(safe-area-inset-bottom);
+  padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
 .game-header {
@@ -451,18 +452,21 @@ button {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   gap: 5px;
+  min-height: 0;
 }
 
 .tile {
   display: inline-grid;
   place-items: center;
   width: 100%;
+  min-width: 0;
+  min-height: 0;
   aspect-ratio: 1;
   border: 2px solid var(--border);
   background: var(--bg);
   color: var(--text);
   font-weight: 700;
-  font-size: clamp(1.2rem, 8cqmin, 2rem);
+  font-size: clamp(0.9rem, 8cqmin, 2rem);
   line-height: 1;
   text-transform: uppercase;
   user-select: none;
@@ -865,6 +869,54 @@ button {
   .mode-tabs { padding-top: 6px; }
   .mode-tab { min-height: 32px; }
   .keyboard { gap: 6px; }
+}
+
+/* Handy quer: Spielfeld links, Tastatur rechts, damit beides in die geringe Höhe passt. */
+@media (orientation: landscape) and (max-height: 520px) {
+  #game-screen {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-areas:
+      "header header"
+      "tabs keyboard"
+      "main keyboard";
+    max-width: 960px;
+  }
+
+  .game-header {
+    grid-area: header;
+    height: 44px;
+  }
+
+  .mode-tabs {
+    grid-area: tabs;
+    padding-top: 6px;
+  }
+
+  .mode-tab {
+    min-height: 30px;
+  }
+
+  .game-main {
+    grid-area: main;
+    padding: 6px 12px 8px;
+  }
+
+  .keyboard {
+    grid-area: keyboard;
+    align-self: center;
+    padding: 8px 10px;
+  }
+
+  .key {
+    height: clamp(38px, 12dvh, 52px);
+    font-size: 1rem;
+  }
+
+  .key-wide {
+    font-size: 0.75rem;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
