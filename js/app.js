@@ -27,6 +27,7 @@ import {
   dailyRanking,
   streakRanking,
   formatDuration,
+  achievements,
 } from './game.js';
 import { burstConfetti } from './fx.js';
 import {
@@ -95,6 +96,7 @@ const els = {
   rankingDialog: $('ranking-dialog'),
   rankingDaily: $('ranking-daily'),
   rankingStreak: $('ranking-streak'),
+  achievementList: $('achievement-list'),
   themeSelect: $('theme-select'),
 };
 
@@ -197,6 +199,8 @@ function profileSummary(profile) {
   const parts = [];
   const streak = currentDailyStreak(stats.daily, state.today);
   if (streak > 0) parts.push({ text: `🔥 ${streak}`, kind: 'streak' });
+  const earned = achievements(profile.data).filter((a) => a.earned).length;
+  if (earned > 0) parts.push({ text: `🏅 ${earned}`, kind: 'badge' });
   if (daily?.day === state.today && daily.status === 'won') parts.push({ text: `Heute ✓ ${daily.guesses.length}/6`, kind: 'win' });
   else if (daily?.day === state.today && daily.status === 'lost') parts.push({ text: 'Heute ✗', kind: 'open' });
   else parts.push({ text: 'Heute offen', kind: 'open' });
@@ -1054,6 +1058,7 @@ function showStats({ fromGameEnd = false } = {}) {
     }),
   );
 
+  renderAchievements();
   $('result-section').hidden = !finished;
   $('countdown').hidden = !(finished && mode === 'daily');
   stopCountdown();
@@ -1087,6 +1092,26 @@ function showStats({ fromGameEnd = false } = {}) {
     }
   }
   openDialog(els.statsDialog);
+}
+
+// Abzeichen des aktuellen Profils im Statistik-Dialog; nicht erreichte sind ausgegraut, mit Beschreibung.
+function renderAchievements() {
+  els.achievementList.replaceChildren(
+    ...achievements(state.profile.data).map((a) => {
+      const li = document.createElement('li');
+      li.className = a.earned ? 'achievement is-earned' : 'achievement';
+      const icon = Object.assign(document.createElement('span'), { className: 'achievement-icon', textContent: a.icon });
+      icon.setAttribute('aria-hidden', 'true');
+      const title = Object.assign(document.createElement('span'), { className: 'achievement-title', textContent: a.title });
+      const text = Object.assign(document.createElement('span'), { className: 'achievement-text', textContent: a.text });
+      const status = Object.assign(document.createElement('span'), {
+        className: 'sr-only',
+        textContent: a.earned ? 'erreicht' : 'noch nicht erreicht',
+      });
+      li.append(icon, title, text, status);
+      return li;
+    }),
+  );
 }
 
 // Rangliste: wer hat heute schon gelöst und wer hat die längste Serie. Stand aus den geladenen Profilen.

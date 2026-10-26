@@ -1030,6 +1030,64 @@ button {
   border: 0;
 }
 
+/* ---------- Abzeichen ---------- */
+
+.achievement-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.achievement {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 8px;
+  border-radius: 16px;
+  background: var(--surface-soft);
+  border: 2px solid var(--line);
+  text-align: center;
+}
+
+.achievement.is-earned {
+  border-color: var(--correct);
+  background: color-mix(in srgb, var(--correct) 14%, var(--surface-soft));
+}
+
+.achievement:not(.is-earned) {
+  opacity: 0.55;
+  filter: grayscale(1);
+}
+
+.achievement-icon {
+  font-size: 26px;
+  line-height: 1.1;
+}
+
+.achievement-title {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 15px;
+  line-height: 1.15;
+}
+
+.achievement-text {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.pill-badge {
+  background: var(--grape-soft);
+  color: var(--grape);
+}
+
 /* ---------- Rangliste und Duden-Link ---------- */
 
 .ranking-list {

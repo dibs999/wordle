@@ -557,6 +557,98 @@ export function dailyRanking(profiles, day) {
   );
 }
 
+// ---------- Abzeichen ----------
+
+// Die Abzeichen werden aus den Statistiken berechnet, nichts davon muss gespeichert werden.
+function totalWins(data) {
+  return data.stats.daily.won + data.stats.endless.won + EXTREME_KEYS.reduce((sum, key) => sum + data.extremeStats[key].won, 0);
+}
+
+export const ACHIEVEMENTS = [
+  {
+    id: 'first-win',
+    icon: '🎉',
+    title: 'Erster Sieg',
+    text: 'Ein Wort gelöst.',
+    earned: (d) => totalWins(d) >= 1,
+  },
+  {
+    id: 'one-guess',
+    icon: '🎯',
+    title: 'Volltreffer',
+    text: 'Ein Wort mit dem ersten Versuch erraten.',
+    earned: (d) => d.stats.daily.dist[0] + d.stats.endless.dist[0] >= 1,
+  },
+  {
+    id: 'daily-10',
+    icon: '📅',
+    title: 'Stammgast',
+    text: '10 Tagesrätsel gelöst.',
+    earned: (d) => d.stats.daily.won >= 10,
+  },
+  {
+    id: 'streak-7',
+    icon: '🔥',
+    title: 'Woche am Stück',
+    text: '7 Tagesrätsel hintereinander gelöst.',
+    earned: (d) => d.stats.daily.maxStreak >= 7,
+  },
+  {
+    id: 'streak-30',
+    icon: '🌟',
+    title: 'Ein ganzer Monat',
+    text: '30 Tagesrätsel hintereinander gelöst.',
+    earned: (d) => d.stats.daily.maxStreak >= 30,
+  },
+  {
+    id: 'endless-25',
+    icon: '♾️',
+    title: 'Vielspieler',
+    text: '25 Wörter im Endlos-Modus gelöst.',
+    earned: (d) => d.stats.endless.won >= 25,
+  },
+  {
+    id: 'devil',
+    icon: '😈',
+    title: 'Teufel bezwungen',
+    text: 'Den Teufel im Extrem-Modus besiegt.',
+    earned: (d) => d.extremeStats.devil.won >= 1,
+  },
+  {
+    id: 'liar',
+    icon: '🤥',
+    title: 'Lügner durchschaut',
+    text: 'Den Lügner im Extrem-Modus besiegt.',
+    earned: (d) => d.extremeStats.liar.won >= 1,
+  },
+  {
+    id: 'blind',
+    icon: '🙈',
+    title: 'Blind getroffen',
+    text: 'Den Blind-Modus gewonnen.',
+    earned: (d) => d.extremeStats.blind.won >= 1,
+  },
+  {
+    id: 'mastermind',
+    icon: '🧠',
+    title: 'Meister der Zahlen',
+    text: 'Den Mastermind-Modus gewonnen.',
+    earned: (d) => d.extremeStats.mastermind.won >= 1,
+  },
+  {
+    id: 'all-extreme',
+    icon: '🏆',
+    title: 'Alle Extreme',
+    text: 'Jede Extrem-Variante mindestens einmal gewonnen.',
+    earned: (d) => EXTREME_KEYS.every((key) => d.extremeStats[key].won >= 1),
+  },
+];
+
+// Alle Abzeichen eines Profils mit dem Stand, ob sie erreicht sind.
+export function achievements(data) {
+  return ACHIEVEMENTS.map(({ id, icon, title, text, earned }) => ({ id, icon, title, text, earned: Boolean(earned(data)) }));
+}
+
 // Rangliste der aktuellen Tagesserien, längste zuerst.
 export function streakRanking(profiles, today) {
   return profiles
