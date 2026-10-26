@@ -129,6 +129,24 @@ export async function createProfile(rawName, data) {
   return toProfile(rows[0]);
 }
 
+// Profile, die vor der Supabase-Einrichtung nur im Browser angelegt wurden.
+export function listLocalOnlyProfiles() {
+  if (!isCloud) return [];
+  return readLocal(LOCAL_PROFILES_KEY, []).map(toProfile);
+}
+
+// Lädt ein lokales Profil samt Statistik zu Supabase hoch und entfernt es danach aus dem Browser.
+export async function importLocalProfile(id) {
+  const local = listLocalOnlyProfiles().find((p) => p.id === id);
+  if (!local) throw new StoreError('Profil nicht gefunden.', 'missing');
+  const profile = await createProfile(local.name, local.data);
+  writeLocal(
+    LOCAL_PROFILES_KEY,
+    readLocal(LOCAL_PROFILES_KEY, []).filter((p) => p.id !== id),
+  );
+  return profile;
+}
+
 export function hasPendingSave(id) {
   return isCloud && readLocal(PENDING_PREFIX + id, null) !== null;
 }

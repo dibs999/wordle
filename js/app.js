@@ -25,6 +25,8 @@ import {
   flushPending,
   hasPendingSave,
   cleanName,
+  listLocalOnlyProfiles,
+  importLocalProfile,
 } from './store.js';
 
 const SOLUTION_SET = new Set(SOLUTIONS);
@@ -50,6 +52,8 @@ const els = {
   profileList: $('profile-list'),
   profileStatus: $('profile-status'),
   localHint: $('local-hint'),
+  localImport: $('local-import'),
+  localImportList: $('local-import-list'),
   newProfileButton: $('new-profile-button'),
   newProfileDialog: $('new-profile-dialog'),
   newProfileForm: $('new-profile-form'),
@@ -192,6 +196,54 @@ function renderProfiles() {
   }
 }
 
+function renderLocalImport() {
+  const locals = listLocalOnlyProfiles();
+  els.localImport.hidden = locals.length === 0;
+  els.localImportList.replaceChildren(
+    ...locals.map((profile) => {
+      const li = document.createElement('li');
+      const avatar = document.createElement('span');
+      avatar.className = 'avatar';
+      avatar.setAttribute('aria-hidden', 'true');
+      fillAvatar(avatar, profile.name);
+      const name = document.createElement('span');
+      name.className = 'local-import-name';
+      name.textContent = profile.name;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'button';
+      button.dataset.importId = profile.id;
+      button.textContent = 'Online übernehmen';
+      button.setAttribute('aria-label', `${profile.name} online übernehmen`);
+      li.append(avatar, name, button);
+      return li;
+    }),
+  );
+}
+
+async function importProfile(button) {
+  button.disabled = true;
+  button.parentElement.querySelector('.local-import-error')?.remove();
+  try {
+    const profile = await importLocalProfile(button.dataset.importId);
+    state.profiles.push(profile);
+    setProfileStatus('');
+    renderProfiles();
+    renderLocalImport();
+    toast(`${profile.name} ist jetzt auf allen Geräten verfügbar`, 2500);
+  } catch (error) {
+    button.disabled = false;
+    const message = document.createElement('span');
+    message.className = 'local-import-error';
+    message.setAttribute('role', 'alert');
+    message.textContent =
+      error.code === 'duplicate'
+        ? 'Diesen Namen gibt es online schon.'
+        : error.message || 'Übernehmen fehlgeschlagen.';
+    button.parentElement.append(message);
+  }
+}
+
 function setProfileStatus(message, { error = false, retry = false } = {}) {
   els.profileStatus.replaceChildren(message);
   els.profileStatus.classList.toggle('is-error', error);
@@ -212,6 +264,7 @@ async function loadProfiles() {
     state.profiles = await listProfiles();
     setProfileStatus('');
     renderProfiles();
+    renderLocalImport();
   } catch (error) {
     setProfileStatus(error.message || 'Profile konnten nicht geladen werden.', { error: true, retry: true });
   }
@@ -747,6 +800,10 @@ function bindEvents() {
   els.profileList.addEventListener('click', (event) => {
     const card = event.target.closest('.profile-card');
     if (card) selectProfile(card.dataset.id);
+  });
+  els.localImportList.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-import-id]');
+    if (button && !button.disabled) importProfile(button);
   });
 
   els.newProfileButton.addEventListener('click', () => {

@@ -50,7 +50,10 @@ Mit Supabase (kostenloser Tarif) sind Profile und Statistiken auf allen Geräten
 - Profile löschen oder umbenennen: im Supabase-Dashboard unter **Table Editor** → `profiles`.
 - Kostenlose Supabase-Projekte werden nach etwa einer Woche ohne Nutzung pausiert. Dann im
   Dashboard auf **Restore project** klicken.
-- Profile, die vor der Einrichtung lokal angelegt wurden, werden nicht übernommen.
+- Profile, die vor der Einrichtung nur im Browser angelegt wurden, erscheinen auf diesem Gerät unter
+  „Nur auf diesem Gerät gespeichert“ und lassen sich mit **Online übernehmen** samt Statistik hochladen.
+- Nach einem Update kann es bis zu 10 Minuten dauern, bis jeder Browser die neue Version lädt
+  (GitHub Pages lässt Dateien so lange zwischenspeichern). Neu laden mit Strg+F5 hilft sofort.
 
 ## Lokal starten
 
@@ -81,3 +84,10 @@ npm test
 | `js/config.js` | Supabase-Zugangsdaten |
 | `js/words.js` | Wortlisten (Lösungswörter und erlaubte Wörter) |
 | `supabase/schema.sql` | Tabelle und Zugriffsregeln für Supabase |
+
+## Wortlisten
+
+- **Erlaubte Wörter:** alle Wörter mit fünf Buchstaben aus
+  [enz/german-wordlist](https://github.com/enz/german-wordlist) (Lizenz CC0), einer Wortliste nach
+  Scrabble-Regeln mit allen Beugungsformen und ohne Namen. ß ist als SS geschrieben.
+- **Lösungswörter:** eine Auswahl geläufiger Grundformen, die alle auch in dieser Liste vorkommen.

@@ -289,6 +289,67 @@ button {
   font-size: 0.95rem;
 }
 
+.local-import {
+  width: 100%;
+  padding: 1rem 1.1rem;
+  border: 2px dashed var(--border-filled);
+  border-radius: 14px;
+}
+
+.local-import h2 {
+  margin: 0 0 0.4rem;
+  font-size: 1rem;
+}
+
+.local-import p {
+  margin: 0 0 0.8rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.local-import-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.local-import-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.local-import-list .avatar {
+  width: 36px;
+  height: 36px;
+  font-size: 1.05rem;
+}
+
+.local-import-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.local-import-list .button {
+  min-height: 40px;
+  padding: 0 1rem;
+  font-size: 0.9rem;
+}
+
+.local-import-error {
+  flex-basis: 100%;
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
 .local-hint {
   max-width: 380px;
   margin: 0;
