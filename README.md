@@ -6,7 +6,8 @@ Errate das deutsche Wort mit fünf Buchstaben in sechs Versuchen.
 - **Tagesrätsel:** ein Wort pro Tag, für alle gleich, neues Wort um Mitternacht (deutsche Zeit).
 - **Endlos-Modus:** beliebig viele zufällige Wörter mit eigener Statistik.
 - **Statistik pro Profil:** Spiele, Siegquote, Serie, Verteilung der Versuche – mit Supabase auf allen Geräten gleich.
-- QWERTZ-Tastatur mit Ä, Ö, Ü (ß wird als SS geschrieben), schwerer Modus, hoher Kontrast, helles/dunkles Design, Ergebnis teilen.
+- **Extrem-Modus:** vier richtig schwere Varianten – 😈 Teufel, 🤥 Lügner, 🙈 Blind, 🎯 Mastermind.
+- QWERTZ-Tastatur mit Ä, Ö, Ü (ß wird als SS geschrieben), hoher Kontrast, helles/dunkles Design, Ergebnis teilen.
 
 Reine statische Webseite (HTML, CSS, JavaScript) – läuft kostenlos auf GitHub Pages.
 

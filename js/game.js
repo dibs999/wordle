@@ -36,32 +36,6 @@ export function evaluateGuess(guess, answer) {
   return result;
 }
 
-// Schwerer Modus: aufgedeckte Hinweise müssen in späteren Versuchen verwendet werden.
-// Gibt eine Fehlermeldung zurück oder null, wenn der Versuch erlaubt ist.
-export function hardModeViolation(guess, previousGuesses, answer) {
-  const g = letters(guess);
-  for (const prev of previousGuesses) {
-    const p = letters(prev);
-    const result = evaluateGuess(prev, answer);
-
-    for (let i = 0; i < p.length; i++) {
-      if (result[i] === 'correct' && g[i] !== p[i]) {
-        return `${i + 1}. Buchstabe muss ${p[i]} sein`;
-      }
-    }
-
-    const required = new Map();
-    for (let i = 0; i < p.length; i++) {
-      if (result[i] !== 'absent') required.set(p[i], (required.get(p[i]) || 0) + 1);
-    }
-    for (const [letter, count] of required) {
-      const have = g.filter((l) => l === letter).length;
-      if (have < count) return count > 1 ? `Wort muss ${count}× ${letter} enthalten` : `Wort muss ${letter} enthalten`;
-    }
-  }
-  return null;
-}
-
 const STATE_RANK = { absent: 1, present: 2, correct: 3 };
 
 // Bester bekannter Zustand je Buchstabe, für die Bildschirmtastatur.
@@ -342,7 +316,7 @@ export function emptyProfileData() {
     endless: null,
     extreme: {},
     stats: { daily: emptyStats(), endless: emptyStats(), extreme: emptyExtremeStats() },
-    settings: { hardMode: false, extremeVariant: 'devil' },
+    settings: { extremeVariant: 'devil' },
   };
 }
 

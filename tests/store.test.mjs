@@ -94,11 +94,11 @@ async function newProfile(name) {
 // Ohne Supabase-Konfiguration in js/config.js werden diese Tests übersprungen.
 test('Speichern lädt hoch und merkt den Serverstand', { skip: !store.isCloud }, async () => {
   const profile = await newProfile('Anna');
-  profile.data.settings.hardMode = true;
+  profile.data.settings.extremeVariant = 'blind';
   const result = await store.saveProfile(profile);
   assert.equal(result.status, 'ok');
   assert.equal(store.hasPendingSave(profile.id), false);
-  assert.equal(server.rows.get(profile.id).data.settings.hardMode, true);
+  assert.equal(server.rows.get(profile.id).data.settings.extremeVariant, 'blind');
   assert.equal(profile.updatedAt, server.rows.get(profile.id).updated_at);
 });
 

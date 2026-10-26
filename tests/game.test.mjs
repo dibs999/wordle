@@ -4,7 +4,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   evaluateGuess,
-  hardModeViolation,
   keyboardStates,
   berlinDayKey,
   dayNumber,
@@ -37,20 +36,6 @@ test('doppelte Buchstaben werden nur so oft markiert, wie sie vorkommen', () => 
 test('Umlaute zählen als ein Buchstabe', () => {
   assert.deepEqual(evaluateGuess('KÖNIG', 'KÖNIG'), Array(5).fill('correct'));
   assert.deepEqual(evaluateGuess('KONIG', 'KÖNIG'), ['correct', 'absent', 'correct', 'correct', 'correct']);
-});
-
-test('schwerer Modus verlangt grüne und gelbe Buchstaben', () => {
-  assert.equal(hardModeViolation('BLUME', [], 'BLUSE'), null);
-  assert.equal(hardModeViolation('KLAGE', ['BLUME'], 'BLUSE'), '1. Buchstabe muss B sein');
-  assert.equal(hardModeViolation('BLASE', ['BLUME'], 'BLUSE'), '3. Buchstabe muss U sein');
-  assert.equal(hardModeViolation('LITER', ['PILOT'], 'TITEL'), null);
-  assert.equal(hardModeViolation('TIGER', ['PILOT'], 'TITEL'), 'Wort muss L enthalten');
-  assert.equal(hardModeViolation('ESSEN', ['PILOT'], 'TITEL'), '2. Buchstabe muss I sein');
-  assert.equal(hardModeViolation('NIXEN', ['PILOT'], 'TITEL'), 'Wort muss L enthalten');
-  // Zwei gelbe/grüne E verlangen zwei E im nächsten Versuch.
-  assert.equal(hardModeViolation('ENKEL', ['EBENE'], 'ESSEN'), null);
-  assert.equal(hardModeViolation('ELFEN', ['EBENE'], 'ESSEN'), null);
-  assert.equal(hardModeViolation('EXTRA', ['EBENE'], 'ESSEN'), 'Wort muss 2× E enthalten');
 });
 
 test('Tastatur zeigt den besten bekannten Zustand', () => {
@@ -116,7 +101,7 @@ test('kaputte Profildaten werden aufgefüllt', () => {
   const data = normalizeProfileData({ stats: { daily: { played: 3 } } });
   assert.equal(data.stats.daily.played, 3);
   assert.deepEqual(data.stats.endless, emptyStats());
-  assert.equal(data.settings.hardMode, false);
+  assert.equal(data.settings.extremeVariant, 'devil');
   assert.equal(normalizeProfileData(null).version, 1);
 });
 
@@ -137,14 +122,14 @@ test('Zusammenführen zweier Geräte verliert keine Runde', () => {
   const local = emptyProfileData();
   local.daily = { day: '2026-10-25', answer: 'BLUME', guesses: ['BLUME'], status: 'won' };
   local.endless = { answer: 'KATZE', guesses: ['KANNE'], status: 'playing' };
-  local.settings.hardMode = true;
+  local.settings.extremeVariant = 'liar';
 
   const merged = mergeProfileData(remote, local);
   assert.equal(merged.daily.day, '2026-10-26');
   assert.equal(merged.daily.status, 'won');
   assert.equal(merged.stats.daily.played, 1);
   assert.equal(merged.endless.answer, 'KATZE');
-  assert.equal(merged.settings.hardMode, true);
+  assert.equal(merged.settings.extremeVariant, 'liar');
 
   // Gleiches Spiel: der weiter fortgeschrittene Stand gewinnt.
   const a = emptyProfileData();

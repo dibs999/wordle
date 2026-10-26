@@ -5,7 +5,6 @@ import {
   EXTREME_VARIANTS,
   letters,
   evaluateGuess,
-  hardModeViolation,
   keyboardStates,
   berlinDayKey,
   puzzleNumber,
@@ -81,7 +80,6 @@ const els = {
   srStatus: $('sr-status'),
   statsDialog: $('stats-dialog'),
   settingsDialog: $('settings-dialog'),
-  hardMode: $('hard-mode'),
   highContrast: $('high-contrast'),
   themeSelect: $('theme-select'),
 };
@@ -817,8 +815,6 @@ async function submitGuess() {
     return;
   }
   const guess = state.current.join('');
-  const extreme = state.mode === 'extreme';
-  const hardMode = !extreme && Boolean(state.profile.data.settings.hardMode);
 
   if (state.current.length < WORD_LENGTH) {
     shakeRow();
@@ -830,24 +826,13 @@ async function submitGuess() {
     toast('Kein gültiges Wort');
     return;
   }
-  if (hardMode) {
-    const violation = hardModeViolation(guess, game.guesses, game.answer);
-    if (violation) {
-      shakeRow();
-      toast(violation);
-      return;
-    }
-  }
 
   const rowIndex = game.guesses.length;
   let feedback;
   let won;
-  if (extreme) {
+  if (state.mode === 'extreme') {
     ({ feedback, won } = playExtremeGuess(game, guess, SOLUTIONS));
   } else {
-    // Merkt sich, ob die ganze Runde im schweren Modus gespielt wurde (für das Sternchen beim Teilen).
-    if (game.guesses.length === 0) game.hard = hardMode;
-    else if (!hardMode) game.hard = false;
     feedback = evaluateGuess(guess, game.answer);
     won = guess === game.answer;
     game.guesses.push(guess);
@@ -921,9 +906,8 @@ function shareText() {
     const { maxGuesses: max } = EXTREME_VARIANTS[variant];
     return `Wordle Deutsch Extrem ${modeLabel(mode, variant)} ${score}/${max}\n\n${extremeShareGrid(game)}\n\n${url}`;
   }
-  const hard = game.hard ? '*' : '';
   const title = mode === 'daily' ? `Wordle Deutsch #${puzzleNumber(game.day)}` : 'Wordle Deutsch (Endlos)';
-  return `${title} ${score}/6${hard}\n\n${shareGrid(game.guesses, game.answer)}\n\n${url}`;
+  return `${title} ${score}/6\n\n${shareGrid(game.guesses, game.answer)}\n\n${url}`;
 }
 
 async function share() {
@@ -1078,25 +1062,9 @@ function applyTheme(value) {
 }
 
 function openSettings() {
-  els.hardMode.checked = Boolean(state.profile?.data.settings.hardMode);
   els.highContrast.checked = document.documentElement.dataset.contrast === 'high';
   els.themeSelect.value = document.documentElement.dataset.theme || 'system';
   openDialog(els.settingsDialog);
-}
-
-function toggleHardMode() {
-  const profile = state.profile;
-  if (!profile) return;
-  const enabling = els.hardMode.checked;
-  const { daily, endless } = profile.data;
-  const midRound = [daily, endless].some((game) => game?.status === 'playing' && game.guesses.length > 0);
-  if (enabling && midRound) {
-    els.hardMode.checked = false;
-    toast('Nur zu Beginn einer Runde aktivierbar', 2000);
-    return;
-  }
-  profile.data.settings.hardMode = enabling;
-  persist();
 }
 
 // ---------- Ereignisse ----------
@@ -1213,7 +1181,6 @@ function bindEvents() {
   $('share-button').addEventListener('click', share);
   $('next-button').addEventListener('click', nextRound);
 
-  els.hardMode.addEventListener('change', toggleHardMode);
   els.highContrast.addEventListener('change', () => {
     if (els.highContrast.checked) document.documentElement.dataset.contrast = 'high';
     else delete document.documentElement.dataset.contrast;
