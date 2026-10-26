@@ -86,22 +86,14 @@
     </header>
 
     <nav class="mode-tabs" aria-label="Spielmodus">
-      <button class="mode-tab" type="button" data-mode="daily" aria-pressed="true">Tagesrätsel <span id="daily-number" class="num"></span></button>
+      <button class="mode-tab" type="button" data-mode="daily" aria-pressed="true">Tagesrätsel</button>
       <button class="mode-tab" type="button" data-mode="endless" aria-pressed="false">Endlos</button>
-      <button class="mode-tab" type="button" data-mode="extreme" aria-pressed="false">Extrem</button>
+      <!-- Zeigt die aktive Extrem-Variante; nochmal antippen öffnet die Auswahl. -->
+      <button class="mode-tab" type="button" data-mode="extreme" aria-pressed="false">Extrem <span id="extreme-badge" class="variant-badge" aria-hidden="true">😈</span></button>
       <button class="mode-tab" type="button" data-mode="blitz" aria-pressed="false">Blitz</button>
     </nav>
 
     <div id="variant-bar" class="variant-bar" hidden>
-      <!-- Extrem: aktive Variante als Knopf (öffnet die Auswahl) und daneben ein kurzer Hinweis. -->
-      <div id="variant-row" class="variant-row">
-        <button id="variant-button" class="variant-button" type="button" aria-haspopup="dialog">
-          <span id="variant-emoji" class="variant-emoji" aria-hidden="true">😈</span>
-          <span id="variant-name">Teufel</span>
-          <svg class="ico variant-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-        </button>
-        <p id="variant-caption" class="variant-caption" aria-live="polite"></p>
-      </div>
       <div id="blitz-bar" class="blitz-bar" hidden>
         <div class="blitz-hud">
           <div id="blitz-clock" class="blitz-stat blitz-clock">
@@ -188,7 +180,7 @@
       <h3>Modi</h3>
       <p><strong>Tagesrätsel:</strong> Ein Wort pro Tag, für alle gleich. Um Mitternacht gibt es ein neues.</p>
       <p><strong>Endlos:</strong> Beliebig viele zufällige Wörter, mit eigener Statistik.</p>
-      <p><strong>Extrem:</strong> Vier richtig schwere Varianten, jede mit eigener Statistik:</p>
+      <p><strong>Extrem:</strong> Vier richtig schwere Varianten, jede mit eigener Statistik. Das Emoji im Reiter zeigt die aktive Variante; nochmal auf „Extrem“ tippen, um zu wechseln:</p>
       <ul class="help-list">
         <li><strong>😈 Teufel</strong> (8 Versuche): Das Spiel legt sich nicht fest, sondern weicht dir aus. Es zeigt immer die Farben, nach denen die meisten Wörter übrig bleiben. Erst wenn nur noch eins passt, kannst du es treffen.</li>
         <li><strong>🤥 Lügner</strong> (8 Versuche): In jeder Reihe zeigt genau eine Kachel die falsche Farbe. Welche, wird nicht verraten.</li>
@@ -278,7 +270,7 @@
       <div class="grabber" aria-hidden="true"></div>
       <button class="dialog-close" type="button" data-close aria-label="Schließen"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       <h2 id="variant-title">Extrem-Variante</h2>
-      <p class="variant-intro">Vier richtig schwere Varianten, jede mit eigener Statistik. Wähle eine:</p>
+      <p class="variant-intro">Vier richtig schwere Varianten, jede mit eigener Statistik. Zum Wechseln später einfach nochmal auf „Extrem“ tippen.</p>
       <div id="variant-options" class="variant-options" role="group" aria-label="Extrem-Variante"></div>
     </div>
   </dialog>

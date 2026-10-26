@@ -115,9 +115,7 @@ const els = {
   newProfileError: $('new-profile-error'),
   gameScreen: $('game-screen'),
   switchProfile: $('switch-profile'),
-  dailyNumber: $('daily-number'),
   variantBar: $('variant-bar'),
-  variantCaption: $('variant-caption'),
   board: $('board'),
   keyboard: $('keyboard'),
   toasts: $('toasts'),
@@ -129,7 +127,6 @@ const els = {
   rankingButton: $('ranking-button'),
   rankingDialog: $('ranking-dialog'),
   rankingList: $('ranking-list'),
-  variantButton: $('variant-button'),
   variantDialog: $('variant-dialog'),
   variantOptions: $('variant-options'),
   badgePopup: $('badge-popup'),
@@ -614,52 +611,40 @@ function setMode(mode) {
     // Gleich speichern, damit ein Abgleich mit dem Server die neue Runde nicht wieder verdrängt.
     persist();
   }
-  els.dailyNumber.textContent = `#${puzzleNumber(state.today)}`;
   clearToasts();
   renderAll();
 }
 
-// Reiter, Varianten-Knopf und Variantenleiste passend zum aktuellen Spielstand.
+// Reiter und Blitz-Leiste passend zum aktuellen Spielstand. Die Extrem-Variante steht als Emoji
+// im Reiter, damit über dem Spielfeld nichts Platz wegnimmt.
 function syncModeChrome() {
   for (const tab of document.querySelectorAll('.mode-tab')) {
     tab.setAttribute('aria-pressed', String(tab.dataset.mode === state.mode));
   }
   const { emoji, label } = EXTREME_VARIANTS[extremeVariant()];
-  $('variant-emoji').textContent = emoji;
-  $('variant-name').textContent = label;
-  els.variantButton.setAttribute('aria-label', `Extrem-Variante: ${label}. Andere Variante wählen`);
-  $('variant-row').hidden = state.mode !== 'extreme';
-  els.variantBar.hidden = state.mode !== 'extreme' && state.mode !== 'blitz';
+  $('extreme-badge').textContent = emoji;
+  const extremeTab = document.querySelector('.mode-tab[data-mode="extreme"]');
+  extremeTab.setAttribute(
+    'aria-label',
+    state.mode === 'extreme' ? `Extrem, Variante ${label}. Antippen, um die Variante zu wechseln` : `Extrem, Variante ${label}`,
+  );
+  els.variantBar.hidden = state.mode !== 'blitz';
 }
 
 function renderAll() {
   syncModeChrome();
   renderBoard();
   renderKeyboardStates();
-  renderCaption();
+  renderBlitzBar();
 }
 
-// Kurzer Hinweis neben dem Varianten-Knopf (die ausführliche Erklärung steht in der Auswahl)
-// und die Blitz-Anzeige.
-function renderCaption() {
-  const game = currentGame();
-  let content = [''];
-  let isStatus = false;
-  if (state.mode === 'extreme') {
-    const variant = extremeVariant();
-    content = [EXTREME_VARIANTS[variant].short];
-    if (variant === 'devil' && game.status === 'playing' && game.guesses.length > 0) {
-      const left = devilCandidates(game, SOLUTIONS).length;
-      isStatus = true;
-      content = left === 1 ? ['Nur noch ', el('strong', '', '1'), ' Wort möglich!'] : ['Noch ', el('strong', '', left.toLocaleString('de-DE')), ' Wörter möglich'];
-    }
-  }
-  els.variantCaption.replaceChildren(...content);
-  // Aktueller Stand (statt allgemeinem Hinweis): bleibt auch bei wenig Platz sichtbar.
-  els.variantCaption.classList.toggle('is-status', isStatus);
-  // Im Blitz steht alles in der großen Anzeige und auf der Start-Karte.
-  els.variantCaption.hidden = state.mode === 'blitz';
-  renderBlitzBar();
+// Teufel: nach jedem Versuch kurz einblenden, wie viele Wörter noch passen (ohne festen Platz).
+function showDevilCount(game) {
+  if (game.variant !== 'devil' || game.status !== 'playing') return;
+  const left = devilCandidates(game, SOLUTIONS).length;
+  const text = left === 1 ? 'Nur noch ein Wort möglich!' : `Noch ${left.toLocaleString('de-DE')} Wörter möglich`;
+  toast(`😈 ${text}`, 2200);
+  return text;
 }
 
 // Erkennt Mitternacht (deutsche Zeit) und lädt dann das neue Tagesrätsel.
@@ -673,7 +658,6 @@ function checkNewDay() {
     return;
   }
   ensureGames();
-  els.dailyNumber.textContent = `#${puzzleNumber(state.today)}`;
   if (state.mode === 'daily') {
     // Das Ergebnis von gestern nicht mehr anzeigen oder teilen.
     if (els.statsDialog.open) els.statsDialog.close();
@@ -1025,8 +1009,9 @@ async function submitGuess() {
     return;
   }
   renderKeyboardStates();
-  renderCaption();
-  announce(`Versuch ${rowIndex + 1}: ${describeFeedback(guess, feedback)}`);
+  renderBlitzBar();
+  const devilText = mode === 'extreme' ? showDevilCount(game) : null;
+  announce(`Versuch ${rowIndex + 1}: ${describeFeedback(guess, feedback)}${devilText ? `. ${devilText}` : ''}`);
   if (mode === 'blitz') {
     if (game.status !== 'playing') afterBlitzWord(blitzRun, won, game.answer, game.guesses.length);
     return;
@@ -1061,8 +1046,9 @@ function scheduleStats(profile, mode, game, delay, unlocked = []) {
 
 // ---------- Statistik & Teilen ----------
 
-function modeLabel(mode, variant) {
-  if (mode === 'daily') return 'Tagesrätsel';
+// day: Tag des Tagesrätsels, damit die Statistik die Rätselnummer zeigt (der Reiter zeigt sie nicht).
+function modeLabel(mode, variant, day = null) {
+  if (mode === 'daily') return day ? `Tagesrätsel #${puzzleNumber(day)}` : 'Tagesrätsel';
   if (mode === 'endless') return 'Endlos';
   return `${EXTREME_VARIANTS[variant].emoji} ${EXTREME_VARIANTS[variant].label}`;
 }
@@ -1154,7 +1140,7 @@ function showStats({ fromGameEnd = false, tab = 'stats' } = {}) {
   const finished = game.status !== 'playing';
   state.statsView = finished ? { game, mode, variant } : null;
 
-  $('stats-mode').textContent = modeLabel(mode, variant);
+  $('stats-mode').textContent = modeLabel(mode, variant, mode === 'daily' ? game.day : null);
   $('stat-played').textContent = stats.played;
   $('stat-winrate').textContent = stats.played ? Math.round((stats.won / stats.played) * 100) : 0;
   $('stat-streak').textContent = mode === 'daily' ? currentDailyStreak(stats, state.today) : stats.streak;
@@ -1348,7 +1334,7 @@ function finishBlitz({ show = false } = {}) {
   const round = state.blitzRound;
   if (run.phase !== 'running') {
     if (round) round.status = 'idle';
-    renderCaption();
+    renderBlitzBar();
     return;
   }
   // Das angefangene Wort zählt als nicht gelöst.
@@ -1733,10 +1719,17 @@ function nextRound() {
 
 function selectVariant(variant) {
   if (state.busy || state.switching || !state.profile || !EXTREME_VARIANTS[variant]) return;
-  if (state.mode === 'extreme' && variant === extremeVariant()) return;
+  if (state.mode === 'extreme' && variant === extremeVariant()) {
+    // Dieselbe Variante nach einer beendeten Runde: nächstes Wort.
+    if (currentGame().status !== 'playing' && !state.statsTimer) setMode('extreme');
+    return;
+  }
   state.profile.data.settings.extremeVariant = variant;
   setMode('extreme');
   persist();
+  // Die Regel kurz einblenden, da über dem Spielfeld keine Erklärung mehr steht.
+  const { emoji, label, short } = EXTREME_VARIANTS[variant];
+  toast(`${emoji} ${label}: ${short}`, 2600);
 }
 
 // Auswahl der Extrem-Variante: alle vier mit ausführlicher Erklärung und eigener Statistik.
@@ -1824,6 +1817,11 @@ function bindEvents() {
       const mode = tab.dataset.mode;
       // Ein laufender Blitz-Durchgang darf nicht durch Antippen des Reiters neu beginnen.
       if (mode === 'blitz' && state.mode === 'blitz' && state.blitz) return;
+      // Im Extrem-Modus öffnet nochmal Antippen die Auswahl der Variante.
+      if (mode === 'extreme' && state.mode === 'extreme') {
+        openVariantPicker();
+        return;
+      }
       if (mode !== state.mode) setMode(mode);
       // Nochmal auf den Reiter tippen startet nach einer beendeten Runde das nächste Wort.
       else if (mode !== 'daily' && currentGame().status !== 'playing' && !state.statsTimer) setMode(mode);
@@ -1834,9 +1832,6 @@ function bindEvents() {
       }
     });
   }
-  els.variantButton.addEventListener('click', () => {
-    if (!state.busy && !state.switching) openVariantPicker();
-  });
   els.variantOptions.addEventListener('click', (event) => {
     const option = event.target.closest('.variant-option');
     if (!option) return;

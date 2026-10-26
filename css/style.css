@@ -745,97 +745,21 @@ button {
   white-space: nowrap;
 }
 
-.mode-tab .num {
-  margin-left: 2px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--line);
-  color: var(--text);
-  font-family: var(--font);
-  font-weight: 800;
-  font-size: 12px;
-}
-
 .mode-tab[aria-pressed="true"] {
   background: var(--accent);
   color: var(--on-accent);
   box-shadow: 0 3px 0 var(--accent-edge);
 }
 
-.mode-tab[aria-pressed="true"] .num {
-  background: rgba(255, 255, 255, 0.25);
-  color: inherit;
+/* Emoji der aktiven Extrem-Variante im Reiter. */
+.variant-badge {
+  margin-left: 1px;
+  font-size: 15px;
 }
 
 .variant-bar {
   padding: 10px 12px 0;
   text-align: center;
-}
-
-/* Extrem: eine Leiste wie die Blitz-Anzeige – links die aktive Variante (öffnet die Auswahl),
-   rechts ein kurzer Hinweis oder beim Teufel die Zahl der noch möglichen Wörter. */
-.variant-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 420px;
-  min-height: 44px;
-  margin: 0 auto;
-  padding: 3px 10px 3px 3px;
-  border-radius: 999px;
-  background: var(--surface);
-  border: 2px solid var(--line);
-  box-shadow: 0 3px 0 var(--surface-edge);
-}
-
-.variant-button {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 0 8px 0 10px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--grape-soft);
-  color: var(--text);
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 16px;
-  line-height: 1;
-}
-
-.variant-button:active:not(:disabled) {
-  transform: scale(0.97);
-}
-
-.variant-emoji {
-  font-size: 19px;
-}
-
-.variant-chevron {
-  width: 16px;
-  height: 16px;
-  color: var(--grape);
-  stroke-width: 3;
-}
-
-.variant-caption {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  color: var(--muted);
-  font-weight: 700;
-  font-size: 13px;
-  line-height: 1.25;
-  text-align: center;
-}
-
-.variant-caption strong {
-  color: var(--accent);
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 17px;
 }
 
 /* Auswahl der Variante im Dialog */
@@ -2386,9 +2310,17 @@ button {
 }
 
 @media (max-width: 360px) {
-  /* Die Tagesnummer am Reiter braucht Platz, damit auch der Blitz-Reiter sichtbar bleibt. */
-  #daily-number {
-    display: none;
+  /* Vier Reiter samt Varianten-Emoji in einer Zeile. */
+  .mode-tabs {
+    gap: 2px;
+  }
+
+  .mode-tab {
+    padding: 0 6px;
+  }
+
+  .variant-badge {
+    font-size: 13px;
   }
 
   .lt {
@@ -2491,9 +2423,6 @@ button {
   .mode-tabs { margin-top: 2px; padding: 3px; }
   .mode-tab { min-height: 32px; font-size: 14.5px; }
   .variant-bar { padding-top: 6px; }
-  .variant-row { min-height: 38px; padding: 2px 8px 2px 2px; }
-  .variant-button { min-height: 30px; font-size: 14.5px; }
-  .variant-caption { font-size: 12px; }
   .keyboard { gap: 5px; padding-bottom: 6px; }
   .key { height: clamp(34px, 7dvh, 54px); }
 }
@@ -2536,29 +2465,6 @@ button {
     padding-top: 6px;
   }
 
-  /* Wenig Platz: nur die Variante und, beim Teufel, die Zahl der möglichen Wörter. */
-  .variant-row {
-    display: inline-flex;
-    max-width: 100%;
-    min-height: 38px;
-    padding: 2px 10px 2px 2px;
-  }
-
-  .variant-button {
-    min-height: 30px;
-    font-size: 14.5px;
-  }
-
-  .variant-caption {
-    flex: 0 1 auto;
-    font-size: 12px;
-    line-height: 1.15;
-  }
-
-  .variant-caption:not(.is-status) {
-    display: none;
-  }
-
   .game-main {
     grid-area: main;
     padding: 6px 12px 8px;
@@ -2581,8 +2487,13 @@ button {
 }
 
 @media (orientation: landscape) and (max-height: 520px) and (max-width: 620px) {
-  .mode-tab .num {
-    display: none;
+  .mode-tabs {
+    gap: 2px;
+  }
+
+  .variant-badge {
+    margin-left: 0;
+    font-size: 12px;
   }
 
   /* Vier Reiter nebeneinander in der linken Spalte: etwas kleiner, damit keiner abgeschnitten wird. */
