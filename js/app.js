@@ -42,6 +42,7 @@ import {
   listLocalOnlyProfiles,
   importLocalProfile,
 } from './store.js';
+import { playTap, playFlip, playInvalid, playWin, playLose, isSoundEnabled, setSoundEnabled } from './sound.js';
 
 const ALLOWED_SET = new Set([...ALLOWED, ...SOLUTIONS]);
 const LAST_PROFILE_KEY = 'wordle-de:last-profile';
@@ -85,6 +86,7 @@ const els = {
   statsDialog: $('stats-dialog'),
   settingsDialog: $('settings-dialog'),
   highContrast: $('high-contrast'),
+  soundToggle: $('sound-toggle'),
   themeSelect: $('theme-select'),
 };
 
@@ -715,6 +717,7 @@ function renderCurrentRow() {
 function shakeRow() {
   const row = els.board.children[currentGame().guesses.length];
   if (!row) return;
+  playInvalid();
   row.classList.remove('shake');
   void row.offsetWidth;
   row.classList.add('shake');
@@ -731,7 +734,9 @@ function revealRow(rowIndex, guess, feedback, isCurrent) {
       if (!isCurrent()) return;
       tile.classList.add('flip');
       setTimeout(() => {
-        if (isCurrent()) setTile(tile, chars[i], states[i], i + 1);
+        if (!isCurrent()) return;
+        setTile(tile, chars[i], states[i], i + 1);
+        playFlip(states[i]);
       }, FLIP_HALF);
       tile.addEventListener('animationend', () => tile.classList.remove('flip'), { once: true });
     }, i * FLIP_STEP);
@@ -818,6 +823,7 @@ function addLetter(letter) {
   tile.classList.remove('pop');
   void tile.offsetWidth;
   tile.classList.add('pop');
+  playTap();
 }
 
 function removeLetter() {
@@ -910,9 +916,11 @@ async function submitGuess() {
   if (won) {
     toast(praise(rowIndex), 1800);
     bounceRow(rowIndex);
+    playWin();
     scheduleStats(profile, mode, game, REDUCED_MOTION ? 600 : 1800);
   } else if (game.status === 'lost') {
     toast(game.answer, 2600);
+    playLose();
     scheduleStats(profile, mode, game, 1800);
   }
 }
@@ -1098,6 +1106,7 @@ function applyTheme(value) {
 }
 
 function openSettings() {
+  els.soundToggle.checked = isSoundEnabled();
   els.highContrast.checked = document.documentElement.dataset.contrast === 'high';
   els.themeSelect.value = document.documentElement.dataset.theme || 'system';
   openDialog(els.settingsDialog);
@@ -1217,6 +1226,11 @@ function bindEvents() {
   $('share-button').addEventListener('click', share);
   $('next-button').addEventListener('click', nextRound);
 
+  els.soundToggle.addEventListener('change', () => {
+    setSoundEnabled(els.soundToggle.checked);
+    // Kurzer Klick als Probe, damit man sofort hört, ob die Töne an sind.
+    if (els.soundToggle.checked) playTap();
+  });
   els.highContrast.addEventListener('change', () => {
     if (els.highContrast.checked) document.documentElement.dataset.contrast = 'high';
     else delete document.documentElement.dataset.contrast;
