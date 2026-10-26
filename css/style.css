@@ -772,50 +772,152 @@ button {
   text-align: center;
 }
 
-.variant-chips {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 7px;
-  max-width: 440px;
-  margin: 0 auto;
-}
-
-.variant-chip {
+/* Extrem: eine Leiste wie die Blitz-Anzeige – links die aktive Variante (öffnet die Auswahl),
+   rechts ein kurzer Hinweis oder beim Teufel die Zahl der noch möglichen Wörter. */
+.variant-row {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 1px;
-  min-width: 0;
-  min-height: 54px;
-  padding: 4px 2px;
-  border-radius: 18px;
+  gap: 8px;
+  max-width: 420px;
+  min-height: 44px;
+  margin: 0 auto;
+  padding: 3px 10px 3px 3px;
+  border-radius: 999px;
   background: var(--surface);
   border: 2px solid var(--line);
   box-shadow: 0 3px 0 var(--surface-edge);
+}
+
+.variant-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 8px 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--grape-soft);
+  color: var(--text);
+  font-family: var(--font-display);
   font-weight: 800;
-  font-size: 12.5px;
-  line-height: 1.2;
+  font-size: 16px;
+  line-height: 1;
 }
 
-.variant-chip span {
-  font-size: 20px;
-  line-height: 1.15;
+.variant-button:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
-.variant-chip[aria-pressed="true"] {
+.variant-emoji {
+  font-size: 19px;
+}
+
+.variant-chevron {
+  width: 16px;
+  height: 16px;
+  color: var(--grape);
+  stroke-width: 3;
+}
+
+.variant-caption {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.variant-caption strong {
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 17px;
+}
+
+/* Auswahl der Variante im Dialog */
+.dialog .variant-intro {
+  margin: 0 0 14px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.variant-options {
+  display: grid;
+  gap: 10px;
+}
+
+.variant-option {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 20px;
+  background: var(--surface-soft);
+  border: 2px solid var(--line);
+  box-shadow: 0 3px 0 var(--surface-edge);
+  color: var(--text);
+  text-align: left;
+}
+
+.variant-option[aria-pressed="true"] {
   background: var(--grape-soft);
   border-color: var(--grape);
   box-shadow: 0 3px 0 var(--grape);
 }
 
-.variant-caption {
-  min-height: 1.35em;
-  margin: 8px 4px 0;
-  color: var(--muted);
-  font-weight: 700;
+.variant-option-emoji {
+  grid-row: 1 / span 3;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--surface);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.variant-option-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.variant-option-current {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--grape);
+  color: #fff;
+  font-family: var(--font);
+  font-weight: 900;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.variant-option-text {
+  margin-top: 2px;
+  color: var(--text);
+  font-weight: 600;
   font-size: 13.5px;
   line-height: 1.35;
+}
+
+.variant-option-meta {
+  margin-top: 4px;
+  color: var(--muted);
+  font-weight: 800;
+  font-size: 12px;
 }
 
 .game-main {
@@ -2324,19 +2426,7 @@ button {
   }
 }
 
-/* Auf schmalen Handys braucht die Teufel-Beschriftung zwei Zeilen: Platz dafür fest reservieren,
-   damit das Spielfeld nicht springt, wenn sie auf "Noch N Wörter möglich." wechselt. */
-@media (max-width: 600px) {
-  .variant-caption {
-    min-height: 2.7em;
-  }
-}
-
 @media (orientation: landscape) and (max-height: 520px) {
-  .variant-caption {
-    display: none;
-  }
-
   /* Blitz: kompaktere Anzeige, damit das Spielfeld groß bleibt. */
   .blitz-bar {
     gap: 6px;
@@ -2368,8 +2458,6 @@ button {
 @media (max-height: 700px) {
   .game-header { height: 54px; }
   .mode-tab { min-height: 38px; }
-  .variant-chip { min-height: 46px; }
-  .variant-chip span { font-size: 17px; }
   .keyboard { gap: 6px; }
 }
 
@@ -2403,15 +2491,9 @@ button {
   .mode-tabs { margin-top: 2px; padding: 3px; }
   .mode-tab { min-height: 32px; font-size: 14.5px; }
   .variant-bar { padding-top: 6px; }
-  .variant-chip { flex-direction: row; gap: 3px; min-height: 34px; border-radius: 12px; font-size: 11.5px; }
-  .variant-chip span { display: none; }
-  /* Umbrechen statt abschneiden: abgeschnittener Text würde nach links rutschen. */
-  .variant-caption {
-    min-height: 2.6em;
-    margin-top: 4px;
-    font-size: 12px;
-    line-height: 1.25;
-  }
+  .variant-row { min-height: 38px; padding: 2px 8px 2px 2px; }
+  .variant-button { min-height: 30px; font-size: 14.5px; }
+  .variant-caption { font-size: 12px; }
   .keyboard { gap: 5px; padding-bottom: 6px; }
   .key { height: clamp(34px, 7dvh, 54px); }
 }
@@ -2454,21 +2536,26 @@ button {
     padding-top: 6px;
   }
 
-  /* Nur das Emoji: Die Namen passen auf kleinen Handys quer nicht in die Knöpfe.
-     Der Name bleibt (unsichtbar) für Screenreader im Knopf. */
-  .variant-chip {
-    min-height: 34px;
-    padding: 2px;
-    border-radius: 12px;
-    font-size: 0;
+  /* Wenig Platz: nur die Variante und, beim Teufel, die Zahl der möglichen Wörter. */
+  .variant-row {
+    display: inline-flex;
+    max-width: 100%;
+    min-height: 38px;
+    padding: 2px 10px 2px 2px;
   }
 
-  .variant-chip span {
-    font-size: 18px;
+  .variant-button {
+    min-height: 30px;
+    font-size: 14.5px;
   }
 
-  /* Im Querformat keine Beschriftung: Namen und Erklärungen sparen den Platz. */
   .variant-caption {
+    flex: 0 1 auto;
+    font-size: 12px;
+    line-height: 1.15;
+  }
+
+  .variant-caption:not(.is-status) {
     display: none;
   }
 

@@ -3,6 +3,7 @@ import {
   WORD_LENGTH,
   MAX_GUESSES,
   EXTREME_VARIANTS,
+  EXTREME_KEYS,
   letters,
   evaluateGuess,
   keyboardStates,
@@ -75,6 +76,7 @@ const ALLOWED_SET = new Set([...ALLOWED, ...SOLUTIONS]);
 const LAST_PROFILE_KEY = 'wordle-de:last-profile';
 const THEME_KEY = 'wordle-de:theme';
 const CONTRAST_KEY = 'wordle-de:contrast';
+const EXTREME_INTRO_KEY = 'wordle-de:extreme-intro';
 const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const FLIP_STEP = REDUCED_MOTION ? 0 : 300;
 const FLIP_HALF = REDUCED_MOTION ? 0 : 250;
@@ -127,7 +129,9 @@ const els = {
   rankingButton: $('ranking-button'),
   rankingDialog: $('ranking-dialog'),
   rankingList: $('ranking-list'),
-  variantChips: $('variant-chips'),
+  variantButton: $('variant-button'),
+  variantDialog: $('variant-dialog'),
+  variantOptions: $('variant-options'),
   badgePopup: $('badge-popup'),
   blitzStart: $('blitz-start'),
   blitzStartPanel: $('blitz-start-panel'),
@@ -615,15 +619,16 @@ function setMode(mode) {
   renderAll();
 }
 
-// Reiter, Varianten-Knöpfe und Variantenleiste passend zum aktuellen Spielstand.
+// Reiter, Varianten-Knopf und Variantenleiste passend zum aktuellen Spielstand.
 function syncModeChrome() {
   for (const tab of document.querySelectorAll('.mode-tab')) {
     tab.setAttribute('aria-pressed', String(tab.dataset.mode === state.mode));
   }
-  for (const chip of document.querySelectorAll('.variant-chip')) {
-    chip.setAttribute('aria-pressed', String(chip.dataset.variant === extremeVariant()));
-  }
-  els.variantChips.hidden = state.mode !== 'extreme';
+  const { emoji, label } = EXTREME_VARIANTS[extremeVariant()];
+  $('variant-emoji').textContent = emoji;
+  $('variant-name').textContent = label;
+  els.variantButton.setAttribute('aria-label', `Extrem-Variante: ${label}. Andere Variante wählen`);
+  $('variant-row').hidden = state.mode !== 'extreme';
   els.variantBar.hidden = state.mode !== 'extreme' && state.mode !== 'blitz';
 }
 
@@ -634,19 +639,24 @@ function renderAll() {
   renderCaption();
 }
 
-// Beschriftung unter den Reitern (Extrem-Erklärung) und die Blitz-Anzeige.
+// Kurzer Hinweis neben dem Varianten-Knopf (die ausführliche Erklärung steht in der Auswahl)
+// und die Blitz-Anzeige.
 function renderCaption() {
   const game = currentGame();
-  let text = '';
+  let content = [''];
+  let isStatus = false;
   if (state.mode === 'extreme') {
     const variant = extremeVariant();
-    text = EXTREME_VARIANTS[variant].caption;
+    content = [EXTREME_VARIANTS[variant].short];
     if (variant === 'devil' && game.status === 'playing' && game.guesses.length > 0) {
       const left = devilCandidates(game, SOLUTIONS).length;
-      text = left === 1 ? 'Nur noch ein Wort möglich!' : `Noch ${left} Wörter möglich.`;
+      isStatus = true;
+      content = left === 1 ? ['Nur noch ', el('strong', '', '1'), ' Wort möglich!'] : ['Noch ', el('strong', '', left.toLocaleString('de-DE')), ' Wörter möglich'];
     }
   }
-  els.variantCaption.textContent = text;
+  els.variantCaption.replaceChildren(...content);
+  // Aktueller Stand (statt allgemeinem Hinweis): bleibt auch bei wenig Platz sichtbar.
+  els.variantCaption.classList.toggle('is-status', isStatus);
   // Im Blitz steht alles in der großen Anzeige und auf der Start-Karte.
   els.variantCaption.hidden = state.mode === 'blitz';
   renderBlitzBar();
@@ -1729,6 +1739,30 @@ function selectVariant(variant) {
   persist();
 }
 
+// Auswahl der Extrem-Variante: alle vier mit ausführlicher Erklärung und eigener Statistik.
+function openVariantPicker() {
+  if (!state.profile) return;
+  const current = extremeVariant();
+  els.variantOptions.replaceChildren(
+    ...EXTREME_KEYS.map((key) => {
+      const { emoji, label, caption, maxGuesses: max } = EXTREME_VARIANTS[key];
+      const { played, won } = state.profile.data.extremeStats[key];
+      const option = el('button', 'variant-option');
+      option.type = 'button';
+      option.dataset.variant = key;
+      option.setAttribute('aria-pressed', String(key === current));
+      const icon = el('span', 'variant-option-emoji', emoji);
+      icon.setAttribute('aria-hidden', 'true');
+      const name = el('span', 'variant-option-name', label);
+      if (key === current) name.append(el('span', 'variant-option-current', 'Aktiv'));
+      const record = played ? `${won} von ${played} gewonnen` : 'noch nicht gespielt';
+      option.append(icon, name, el('span', 'variant-option-text', caption), el('span', 'variant-option-meta', `${max} Versuche · ${record}`));
+      return option;
+    }),
+  );
+  openDialog(els.variantDialog);
+}
+
 // ---------- Einstellungen ----------
 
 function syncThemeColor() {
@@ -1793,11 +1827,22 @@ function bindEvents() {
       if (mode !== state.mode) setMode(mode);
       // Nochmal auf den Reiter tippen startet nach einer beendeten Runde das nächste Wort.
       else if (mode !== 'daily' && currentGame().status !== 'playing' && !state.statsTimer) setMode(mode);
+      // Beim ersten Besuch im Extrem-Modus (pro Gerät) gleich die Varianten mit Erklärung zeigen.
+      if (mode === 'extreme' && !readSetting(EXTREME_INTRO_KEY)) {
+        writeSetting(EXTREME_INTRO_KEY, '1');
+        openVariantPicker();
+      }
     });
   }
-  for (const chip of document.querySelectorAll('.variant-chip')) {
-    chip.addEventListener('click', () => selectVariant(chip.dataset.variant));
-  }
+  els.variantButton.addEventListener('click', () => {
+    if (!state.busy && !state.switching) openVariantPicker();
+  });
+  els.variantOptions.addEventListener('click', (event) => {
+    const option = event.target.closest('.variant-option');
+    if (!option) return;
+    els.variantDialog.close();
+    selectVariant(option.dataset.variant);
+  });
   els.blitzStart.addEventListener('click', startBlitzCountdown);
   els.blitzSkip.addEventListener('click', skipBlitzWord);
 

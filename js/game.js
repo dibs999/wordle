@@ -150,24 +150,28 @@ export const EXTREME_VARIANTS = {
     emoji: '😈',
     maxGuesses: 8,
     caption: 'Das Wort weicht dir aus und legt sich erst fest, wenn nur noch eins passt.',
+    short: 'Weicht dir aus, bis nur ein Wort passt',
   },
   liar: {
     label: 'Lügner',
     emoji: '🤥',
     maxGuesses: 8,
     caption: 'In jeder Reihe zeigt genau eine Kachel die falsche Farbe.',
+    short: 'In jeder Reihe lügt eine Kachel',
   },
   blind: {
     label: 'Blind',
     emoji: '🙈',
     maxGuesses: 6,
     caption: 'Kein Gelb und keine Farben auf der Tastatur – merk dir alles selbst.',
+    short: 'Kein Gelb, keine Farben auf der Tastatur',
   },
   mastermind: {
     label: 'Mastermind',
     emoji: '🎯',
     maxGuesses: 8,
     caption: 'Nur die Anzahl: 🟩 an der richtigen Stelle, 🟨 an einer anderen Stelle.',
+    short: 'Nur Anzahlen: 🟩 richtig, 🟨 woanders',
   },
 };
 

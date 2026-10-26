@@ -93,13 +93,15 @@
     </nav>
 
     <div id="variant-bar" class="variant-bar" hidden>
-      <div id="variant-chips" class="variant-chips" role="group" aria-label="Extrem-Variante">
-        <button class="variant-chip" type="button" data-variant="devil" aria-pressed="true"><span aria-hidden="true">😈</span>Teufel</button>
-        <button class="variant-chip" type="button" data-variant="liar" aria-pressed="false"><span aria-hidden="true">🤥</span>Lügner</button>
-        <button class="variant-chip" type="button" data-variant="blind" aria-pressed="false"><span aria-hidden="true">🙈</span>Blind</button>
-        <button class="variant-chip" type="button" data-variant="mastermind" aria-pressed="false"><span aria-hidden="true">🎯</span>Mastermind</button>
+      <!-- Extrem: aktive Variante als Knopf (öffnet die Auswahl) und daneben ein kurzer Hinweis. -->
+      <div id="variant-row" class="variant-row">
+        <button id="variant-button" class="variant-button" type="button" aria-haspopup="dialog">
+          <span id="variant-emoji" class="variant-emoji" aria-hidden="true">😈</span>
+          <span id="variant-name">Teufel</span>
+          <svg class="ico variant-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <p id="variant-caption" class="variant-caption" aria-live="polite"></p>
       </div>
-      <p id="variant-caption" class="variant-caption" aria-live="polite"></p>
       <div id="blitz-bar" class="blitz-bar" hidden>
         <div class="blitz-hud">
           <div id="blitz-clock" class="blitz-stat blitz-clock">
@@ -266,6 +268,18 @@
       <button id="stats-ranking" class="button button-secondary stats-ranking" type="button">
         <span aria-hidden="true">🏆</span> Rangliste
       </button>
+    </div>
+  </dialog>
+
+  <!-- Extrem-Variante wählen -->
+  <dialog id="variant-dialog" class="dialog" aria-labelledby="variant-title">
+    <div class="toasts dialog-toasts" role="status" aria-live="polite"></div>
+    <div class="dialog-body">
+      <div class="grabber" aria-hidden="true"></div>
+      <button class="dialog-close" type="button" data-close aria-label="Schließen"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      <h2 id="variant-title">Extrem-Variante</h2>
+      <p class="variant-intro">Vier richtig schwere Varianten, jede mit eigener Statistik. Wähle eine:</p>
+      <div id="variant-options" class="variant-options" role="group" aria-label="Extrem-Variante"></div>
     </div>
   </dialog>
 
