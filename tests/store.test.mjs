@@ -158,7 +158,7 @@ test('schnell hintereinander gespeicherte Stände kommen in der richtigen Reihen
   assert.equal(store.hasPendingSave(profile.id), false);
 });
 
-test('gleichzeitig auf zwei Geräten gespielte Runden zählen beide', { skip: !store.isCloud }, async () => {
+test('gleichzeitig gespielte Runden auf zwei Geräten werden nie doppelt gezählt', { skip: !store.isCloud }, async () => {
   const { recordEndlessResult } = await import('../js/game.js');
   const profile = await newProfile('Emil');
 
@@ -173,12 +173,11 @@ test('gleichzeitig auf zwei Geräten gespielte Runden zählen beide', { skip: !s
 
   assert.equal(result.status, 'ok');
   const saved = server.rows.get(profile.id).data.stats.endless;
-  assert.equal(saved.played, 2, 'beide Runden gezählt');
-  assert.equal(saved.won, 1);
-  assert.equal(profile.data.stats.endless.played, 2, 'die App zeigt den zusammengeführten Stand');
+  assert.equal(saved.played, 1, 'nicht 2 oder 3: keine Doppelzählung');
+  assert.equal(store.hasPendingSave(profile.id), false);
 
-  // Eine weitere Runde danach baut auf dem zusammengeführten Stand auf und zählt nicht doppelt.
+  // Eine weitere Runde danach zählt genau einmal dazu.
   profile.data.stats.endless = recordEndlessResult(profile.data.stats.endless, true, 3);
   await store.saveProfile(profile);
-  assert.equal(server.rows.get(profile.id).data.stats.endless.played, 3);
+  assert.equal(server.rows.get(profile.id).data.stats.endless.played, 2);
 });

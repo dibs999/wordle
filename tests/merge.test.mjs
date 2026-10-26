@@ -4,74 +4,55 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   emptyProfileData,
-  emptyStats,
   normalizeProfileData,
   mergeProfileData,
-  mergeCounts,
-  countsSnapshot,
-  recordDailyResult,
   recordEndlessResult,
+  recordDailyResult,
   newExtremeGame,
   playExtremeGuess,
   devilGameStale,
 } from '../js/game.js';
 import { SOLUTIONS } from '../js/words.js';
 
-function played(stats, results) {
-  return results.reduce((s, [won, guesses]) => recordEndlessResult(s, won, guesses), stats);
+function withEndless(results) {
+  const data = emptyProfileData();
+  for (const [won, guesses] of results) data.stats.endless = recordEndlessResult(data.stats.endless, won, guesses);
+  return data;
 }
 
-test('Runden beider Geräte seit dem gemeinsamen Stand werden addiert', () => {
-  const base = played(emptyStats(), [[true, 3]]);
-  const remote = played(base, [[true, 2]]); // anderes Gerät: Sieg in 2
-  const local = played(base, [[false, 6]]); // dieses Gerät: Niederlage
-  const merged = mergeCounts(remote, local, base);
-  assert.equal(merged.played, 3);
-  assert.equal(merged.won, 2);
-  assert.deepEqual(merged.dist, [0, 1, 1, 0, 0, 0]);
-  assert.equal(merged.streak, 0, 'die lokale Niederlage beendet die Serie');
-  assert.equal(merged.maxStreak, 2);
+test('Statistik: der Stand mit mehr gespielten Runden gilt, Runden werden nicht addiert', () => {
+  // Beide Geräte haben dieselbe Runde gesehen und dann jeweils eine eigene gespielt.
+  const remote = withEndless([[true, 3], [true, 2]]);
+  const local = withEndless([[true, 3], [false, 6]]);
+  const merged = mergeProfileData(remote, local);
+  assert.equal(merged.stats.endless.played, 2, 'nicht 3: keine Doppelzählung');
 });
 
-test('ohne gemeinsamen Stand gilt die Statistik mit mehr Runden', () => {
-  const a = played(emptyStats(), [[true, 3]]);
-  const b = played(emptyStats(), [[true, 3], [true, 4]]);
-  assert.equal(mergeCounts(a, b, null).played, 2);
-  assert.equal(mergeCounts(b, a, null).played, 2);
-});
-
-test('nur ein Gerät hat gespielt: dessen Statistik gilt, nie eine kleinere', () => {
-  const base = played(emptyStats(), [[true, 3]]);
-  const local = played(base, [[true, 4]]);
-  assert.equal(mergeCounts(base, local, base).played, 2);
-  const remote = played(base, [[true, 5]]);
-  assert.equal(mergeCounts(remote, base, base).played, 2);
-  // Ein zurückgedrehter Server (z. B. durch einen alten Tab) senkt die lokale Zahl nicht.
-  assert.equal(mergeCounts(emptyStats(), base, base).played, 1);
+test('Statistik: ein älterer Stand des Servers senkt die lokale Zahl nie', () => {
+  const local = withEndless([[true, 3], [true, 4]]);
+  const remote = withEndless([[true, 3]]);
+  assert.equal(mergeProfileData(remote, local).stats.endless.played, 2);
+  assert.equal(mergeProfileData(local, remote).stats.endless.played, 2);
 });
 
 test('dasselbe Tagesrätsel auf zwei Geräten zählt nur einmal', () => {
   const remote = emptyProfileData();
   const local = emptyProfileData();
-  const daily = { day: '2026-10-26', answer: 'APFEL', guesses: ['APFEL'], status: 'won' };
-  remote.daily = { ...daily };
-  local.daily = { ...daily, guesses: ['LEBEN', 'APFEL'] };
   remote.stats.daily = recordDailyResult(remote.stats.daily, '2026-10-26', true, 1);
   local.stats.daily = recordDailyResult(local.stats.daily, '2026-10-26', true, 2);
-  const merged = mergeProfileData(remote, local, countsSnapshot(emptyProfileData()));
+  const merged = mergeProfileData(remote, local);
   assert.equal(merged.stats.daily.played, 1);
 });
 
-test('Extrem-Statistik von beiden Geräten wird addiert', () => {
-  const base = emptyProfileData();
+test('Extrem-Statistik: je Variante der Stand mit mehr Runden', () => {
   const remote = emptyProfileData();
   const local = emptyProfileData();
   remote.extremeStats.liar = recordEndlessResult(remote.extremeStats.liar, true, 7);
   local.extremeStats.liar = recordEndlessResult(local.extremeStats.liar, true, 8);
-  const merged = mergeProfileData(remote, local, countsSnapshot(base));
+  local.extremeStats.liar = recordEndlessResult(local.extremeStats.liar, true, 8);
+  const merged = mergeProfileData(remote, local);
   assert.equal(merged.extremeStats.liar.played, 2);
-  assert.equal(merged.extremeStats.liar.dist[6], 1);
-  assert.equal(merged.extremeStats.liar.dist[7], 1);
+  assert.equal(merged.extremeStats.liar.dist[7], 2);
 });
 
 test('kurzzeitig unter stats.extreme gespeicherte Statistik wird übernommen', () => {

@@ -1,7 +1,7 @@
 // Speichert Profile in Supabase (geräteübergreifend) oder, ohne Konfiguration, im localStorage dieses Browsers.
 
 import { SUPABASE_URL, SUPABASE_KEY } from './config.js';
-import { normalizeProfileData, mergeProfileData, countsSnapshot, reuseUnchangedGames } from './game.js';
+import { normalizeProfileData, mergeProfileData, reuseUnchangedGames } from './game.js';
 
 // Nur der Teil bis ".supabase.co" zählt, auch wenn "/rest/v1/" mitkopiert wurde.
 const BASE_URL = String(SUPABASE_URL || '').trim().replace(/\/+$/, '').replace(/\/rest\/v1$/, '');
@@ -15,8 +15,8 @@ const NAME_MAX = 20;
 const REQUEST_TIMEOUT_MS = 15_000;
 const SELECT = 'select=id,name,data,updated_at';
 
-// Noch nicht hochgeladene Spielstände: { data, base, baseCounts }. base ist der Serverstand (updated_at),
-// auf dem die Daten aufbauen, baseCounts dessen Statistik (zum Zusammenführen per Zuwachs).
+// Noch nicht hochgeladene Spielstände: { data, base }. base ist der Serverstand (updated_at),
+// auf dem die Daten aufbauen.
 // Zusätzlich im Speicher, falls localStorage nicht verfügbar ist.
 const memoryPending = new Map();
 const inflight = new Map();
@@ -55,15 +55,12 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-// syncedCounts: Statistik des Serverstands updatedAt, auf dem profile.data aufbaut.
 function toProfile(row) {
-  const data = normalizeProfileData(row.data);
   return {
     id: row.id,
     name: row.name,
-    data,
+    data: normalizeProfileData(row.data),
     updatedAt: row.updated_at || null,
-    syncedCounts: countsSnapshot(data),
   };
 }
 
@@ -93,11 +90,10 @@ function liveProfile(id, profile) {
   return profile || (activeProfile?.id === id ? activeProfile : null);
 }
 
-function adoptData(live, data, updatedAt, syncedCounts) {
+function adoptData(live, data, updatedAt) {
   const previousData = live.data;
   live.data = reuseUnchangedGames(previousData, data);
   live.updatedAt = updatedAt;
-  live.syncedCounts = syncedCounts;
   conflictHandler?.(live, previousData);
 }
 
@@ -151,8 +147,8 @@ function readPending(id) {
   const raw = readLocal(PENDING_PREFIX + id, null);
   if (!raw) return null;
   // Ältere Version hat nur die Daten ohne Serverstand gespeichert.
-  if (!('data' in raw && 'base' in raw)) return { data: raw, base: null, baseCounts: null };
-  return { baseCounts: null, ...raw };
+  if (!('data' in raw && 'base' in raw)) return { data: raw, base: null };
+  return raw;
 }
 
 function writePending(id, entry) {
@@ -258,7 +254,6 @@ export async function saveProfile(profile) {
     data: clone(profile.data),
     // Baut auf demselben Serverstand auf wie eine noch nicht gesendete Änderung.
     base: previous ? previous.base : profile.updatedAt,
-    baseCounts: previous ? previous.baseCounts : profile.syncedCounts || null,
   });
   return flushPending(profile.id, profile);
 }
@@ -304,20 +299,18 @@ async function flushNow(id, profile) {
 
     if (rows.length > 0) {
       const savedAt = rows[0].updated_at;
-      const savedCounts = countsSnapshot(entry.data);
       const latest = readPending(id);
       const newerPending = latest && JSON.stringify(latest.data) !== JSON.stringify(entry.data);
       if (!newerPending) clearPending(id);
       // Was inzwischen neu vorgemerkt wurde, baut jetzt auf dem gerade gespeicherten Stand auf.
-      else writePending(id, { ...latest, base: savedAt, baseCounts: savedCounts });
+      else writePending(id, { ...latest, base: savedAt });
       const live = liveProfile(id, profile);
       if (live) {
         // Der Serverstand eines Profils darf nie weiter sein als die Daten, die es hält.
         if (newerPending || JSON.stringify(live.data) === JSON.stringify(entry.data)) {
           live.updatedAt = savedAt;
-          live.syncedCounts = savedCounts;
         } else {
-          adoptData(live, normalizeProfileData(clone(entry.data)), savedAt, savedCounts);
+          adoptData(live, normalizeProfileData(clone(entry.data)), savedAt);
         }
       }
       return { status: 'ok' };
@@ -335,11 +328,10 @@ async function flushNow(id, profile) {
       return { status: 'missing' };
     }
     const latest = readPending(id) || entry;
-    const merged = mergeProfileData(remote.data, latest.data, latest.baseCounts);
-    const remoteCounts = countsSnapshot(remote.data);
-    writePending(id, { data: clone(merged), base: remote.updatedAt, baseCounts: remoteCounts });
+    const merged = mergeProfileData(remote.data, latest.data);
+    writePending(id, { data: clone(merged), base: remote.updatedAt });
     const live = liveProfile(id, profile);
-    if (live) adoptData(live, merged, remote.updatedAt, remoteCounts);
+    if (live) adoptData(live, merged, remote.updatedAt);
   }
   return { status: 'error', error: new StoreError('Speichern fehlgeschlagen.', 'conflict') };
 }

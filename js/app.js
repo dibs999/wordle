@@ -22,7 +22,6 @@ import {
   extremeKeyboardStates,
   extremeShareGrid,
   mergeProfileData,
-  countsSnapshot,
   reuseUnchangedGames,
   dailyRanking,
   streakRanking,
@@ -668,7 +667,6 @@ async function refreshFromCloud() {
   const before = gameIdentity();
   profile.data = reuseUnchangedGames(profile.data, merged);
   profile.updatedAt = remote.updatedAt;
-  profile.syncedCounts = countsSnapshot(remote.data);
   applyProfileUpdate(before);
   // Hat das Zusammenführen etwas repariert, den reparierten Stand zurückspeichern.
   if (JSON.stringify(merged) !== JSON.stringify(remote.data)) persist();
