@@ -4,10 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="Wordle auf Deutsch: Errate das Wort mit fünf Buchstaben in sechs Versuchen.">
-  <meta name="theme-color" content="#121213" media="(prefers-color-scheme: dark)">
-  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#2e2030" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fff6ea" media="(prefers-color-scheme: light)">
   <title>Wordle Deutsch</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='16' fill='%23538d4e'/%3E%3Ctext x='50' y='72' font-size='64' font-family='Arial,sans-serif' font-weight='bold' text-anchor='middle' fill='white'%3EW%3C/text%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect x='6' y='10' width='88' height='84' rx='22' fill='%231c5f2d'/%3E%3Crect x='6' y='4' width='88' height='84' rx='22' fill='%232a8540'/%3E%3Ctext x='50' y='66' font-size='58' font-family='Arial Rounded MT Bold,Arial,sans-serif' font-weight='bold' text-anchor='middle' fill='white'%3EW%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito:wght@600;700;800;900&display=swap">
   <link rel="stylesheet" href="css/style.css">
   <script>
     // Design vor dem ersten Zeichnen setzen, damit die Seite nicht kurz hell aufblitzt.
@@ -16,7 +19,7 @@
       if (theme === 'light' || theme === 'dark') {
         document.documentElement.dataset.theme = theme;
         document.querySelectorAll('meta[name="theme-color"]').forEach(function (meta) {
-          meta.content = theme === 'dark' ? '#121213' : '#ffffff';
+          meta.content = theme === 'dark' ? '#2e2030' : '#fff6ea';
         });
       }
       if (localStorage.getItem('wordle-de:contrast') === '1') document.documentElement.dataset.contrast = 'high';
@@ -28,14 +31,29 @@
   <!-- Profilauswahl -->
   <main id="profile-screen" class="screen" aria-labelledby="profile-title">
     <div id="profile-toasts" class="toasts profile-toasts" role="status" aria-live="polite"></div>
+    <div class="confetti" aria-hidden="true">
+      <span class="s-present" style="left:6%;top:9%;--r:18deg"></span>
+      <span class="s-grape" style="right:7%;top:7%;--r:-14deg;--s:14px"></span>
+      <span class="s-accent" style="right:8%;top:19%;--r:24deg;--s:12px"></span>
+      <span class="s-sky" style="left:5%;top:21%;--r:-20deg;--s:12px"></span>
+      <span class="s-correct" style="left:15%;top:14%;--r:10deg;--s:10px"></span>
+      <span class="s-present" style="right:17%;top:13%;--r:-8deg;--s:10px"></span>
+    </div>
     <header class="profile-header">
-      <h1 class="logo">Wordle <span>Deutsch</span></h1>
-      <p id="profile-title" class="profile-question">Wer spielt?</p>
+      <div class="logo-big" role="img" aria-label="Wordle Deutsch">
+        <div class="logo-tiles" aria-hidden="true">
+          <span class="lt s-correct" style="--r:-7deg;--y:2px">W</span><span class="lt s-present" style="--r:5deg;--y:-3px">O</span><span class="lt s-accent" style="--r:-3deg;--y:1px">R</span><span class="lt s-sky" style="--r:6deg;--y:-2px">D</span><span class="lt s-grape" style="--r:-5deg;--y:2px">L</span><span class="lt s-correct" style="--r:4deg;--y:-1px">E</span>
+        </div>
+        <span class="logo-sub" aria-hidden="true">Deutsch</span>
+      </div>
+      <h1 id="profile-title" class="profile-question">Wer spielt?</h1>
+      <p class="profile-hint">Tipp auf dein Profil – ganz ohne Login.</p>
     </header>
     <p id="profile-status" class="profile-status" role="status"></p>
     <ul id="profile-list" class="profile-list" aria-label="Profile"></ul>
-    <button id="new-profile-button" class="button button-secondary" type="button">
-      <span aria-hidden="true">＋</span> Neues Profil
+    <button id="new-profile-button" class="button button-add" type="button">
+      <span class="plus" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
+      <span>Neues Profil</span>
     </button>
     <section id="local-import" class="local-import" aria-labelledby="local-import-title" hidden>
       <h2 id="local-import-title">Nur auf diesem Gerät gespeichert</h2>
@@ -54,23 +72,26 @@
       <button id="switch-profile" class="profile-chip" type="button" aria-label="Profil wechseln">
         <span class="avatar avatar-small" aria-hidden="true"></span>
         <span class="profile-chip-name"></span>
+        <svg class="ico chip-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 9.5l5-5 5 5M7 14.5l5 5 5-5"/></svg>
       </button>
-      <h1 class="logo logo-small">Wordle</h1>
+      <div class="logo-mini" role="img" aria-label="Wordle">
+        <span class="lt s-correct" style="--r:-6deg" aria-hidden="true">W</span><span class="logo-mini-rest" aria-hidden="true">ordle</span>
+      </div>
       <div class="header-actions">
         <button class="icon-button" type="button" data-open="help-dialog" aria-label="Spielregeln">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5 0-2.21-1.79-4-4-4z"/></svg>
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.3"/><path d="M9.4 9.4a2.7 2.7 0 0 1 5.3.8c0 1.9-2.7 2.2-2.7 4"/><circle cx="12" cy="17.4" r=".7" fill="currentColor"/></svg>
         </button>
         <button class="icon-button" type="button" data-open="stats-dialog" aria-label="Statistik">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11V3H8v6H2v12h20V11h-6zm-6-6h4v14h-4V5zm-6 6h4v8H4v-8zm16 8h-4v-6h4v6z"/></svg>
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 20v-6M12 20V5M18.5 20v-9.5"/></svg>
         </button>
         <button class="icon-button" type="button" data-open="settings-dialog" aria-label="Einstellungen">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h9.5M18.5 7.5H20M4 16.5h3.5M12.5 16.5H20"/><circle cx="16" cy="7.5" r="2.4"/><circle cx="10" cy="16.5" r="2.4"/></svg>
         </button>
       </div>
     </header>
 
     <nav class="mode-tabs" aria-label="Spielmodus">
-      <button class="mode-tab" type="button" data-mode="daily" aria-pressed="true">Tagesrätsel <span id="daily-number"></span></button>
+      <button class="mode-tab" type="button" data-mode="daily" aria-pressed="true">Tagesrätsel <span id="daily-number" class="num"></span></button>
       <button class="mode-tab" type="button" data-mode="endless" aria-pressed="false">Endlos</button>
       <button class="mode-tab" type="button" data-mode="extreme" aria-pressed="false">Extrem</button>
     </nav>
@@ -98,10 +119,11 @@
   <dialog id="new-profile-dialog" class="dialog" aria-labelledby="new-profile-title">
     <div class="toasts dialog-toasts" role="status" aria-live="polite"></div>
     <form id="new-profile-form" method="dialog" class="dialog-body" novalidate>
-      <button class="dialog-close" type="button" data-close aria-label="Schließen">×</button>
+      <div class="grabber" aria-hidden="true"></div>
+      <button class="dialog-close" type="button" data-close aria-label="Schließen"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       <h2 id="new-profile-title">Neues Profil</h2>
       <label class="field">
-        <span>Name</span>
+        <span>Wie heißt du?</span>
         <input id="new-profile-name" name="name" type="text" maxlength="20" autocomplete="off" autocapitalize="words" enterkeyhint="done" required>
       </label>
       <p id="new-profile-error" class="form-error" role="alert"></p>
@@ -113,7 +135,8 @@
   <dialog id="help-dialog" class="dialog" aria-labelledby="help-title">
     <div class="toasts dialog-toasts" role="status" aria-live="polite"></div>
     <div class="dialog-body">
-      <button class="dialog-close" type="button" data-close aria-label="Schließen">×</button>
+      <div class="grabber" aria-hidden="true"></div>
+      <button class="dialog-close" type="button" data-close aria-label="Schließen"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       <h2 id="help-title">So wird gespielt</h2>
       <p>Errate das Wort mit fünf Buchstaben in sechs Versuchen.</p>
       <ul class="help-list">
@@ -123,15 +146,15 @@
       </ul>
       <h3>Beispiele</h3>
       <div class="example" aria-label="Beispiel: B ist an der richtigen Stelle">
-        <span class="tile" data-state="correct">B</span><span class="tile">L</span><span class="tile">U</span><span class="tile">M</span><span class="tile">E</span>
+        <span class="tile" data-state="correct">B</span><span class="tile" data-filled>L</span><span class="tile" data-filled>U</span><span class="tile" data-filled>M</span><span class="tile" data-filled>E</span>
       </div>
       <p><strong>B</strong> ist im Wort und an der richtigen Stelle.</p>
       <div class="example" aria-label="Beispiel: I ist im Wort, aber an einer anderen Stelle">
-        <span class="tile">P</span><span class="tile" data-state="present">I</span><span class="tile">L</span><span class="tile">O</span><span class="tile">T</span>
+        <span class="tile" data-filled>P</span><span class="tile" data-state="present">I</span><span class="tile" data-filled>L</span><span class="tile" data-filled>O</span><span class="tile" data-filled>T</span>
       </div>
       <p><strong>I</strong> ist im Wort, aber an einer anderen Stelle.</p>
       <div class="example" aria-label="Beispiel: K ist nicht im Wort">
-        <span class="tile">W</span><span class="tile">O</span><span class="tile">L</span><span class="tile" data-state="absent">K</span><span class="tile">E</span>
+        <span class="tile" data-filled>W</span><span class="tile" data-filled>O</span><span class="tile" data-filled>L</span><span class="tile" data-state="absent">K</span><span class="tile" data-filled>E</span>
       </div>
       <p><strong>K</strong> kommt im Wort nicht vor.</p>
       <h3>Modi</h3>
@@ -151,17 +174,27 @@
   <dialog id="stats-dialog" class="dialog" aria-labelledby="stats-title">
     <div class="toasts dialog-toasts" role="status" aria-live="polite"></div>
     <div class="dialog-body">
-      <button class="dialog-close" type="button" data-close aria-label="Schließen">×</button>
+      <div class="grabber" aria-hidden="true"></div>
+      <button class="dialog-close" type="button" data-close aria-label="Schließen"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       <div id="result-section" class="result-section" hidden>
-        <h2 id="result-title"></h2>
+        <div id="result-tiles" class="win-tiles" aria-hidden="true"></div>
+        <h2 id="result-title" class="result-title"></h2>
         <p id="result-word" class="result-word"></p>
         <div class="result-actions">
-          <button id="share-button" class="button" type="button">Teilen</button>
-          <button id="next-button" class="button button-secondary" type="button"></button>
+          <button id="share-button" class="button" type="button">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5v11M7.5 8 12 3.5 16.5 8"/><path d="M5 13v5.5A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V13"/></svg>
+            <span>Teilen</span>
+          </button>
+          <button id="next-button" class="button button-secondary" type="button">
+            <span id="next-label"></span>
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
         </div>
-        <p id="countdown" class="countdown"></p>
       </div>
-      <h2 id="stats-title">Statistik <span id="stats-mode" class="stats-mode"></span></h2>
+      <div class="stats-head">
+        <h2 id="stats-title">Statistik</h2>
+        <span id="stats-mode" class="stats-mode"></span>
+      </div>
       <div class="stats-numbers">
         <div><strong id="stat-played">0</strong><span>Gespielt</span></div>
         <div><strong id="stat-winrate">0</strong><span>% Gewonnen</span></div>
@@ -170,6 +203,7 @@
       </div>
       <h3>Verteilung der Versuche</h3>
       <ol id="distribution" class="distribution"></ol>
+      <p id="countdown" class="countdown" hidden></p>
     </div>
   </dialog>
 
@@ -177,12 +211,13 @@
   <dialog id="settings-dialog" class="dialog" aria-labelledby="settings-title">
     <div class="toasts dialog-toasts" role="status" aria-live="polite"></div>
     <div class="dialog-body">
-      <button class="dialog-close" type="button" data-close aria-label="Schließen">×</button>
+      <div class="grabber" aria-hidden="true"></div>
+      <button class="dialog-close" type="button" data-close aria-label="Schließen"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       <h2 id="settings-title">Einstellungen</h2>
       <label class="setting">
         <span>
           <strong>Schwerer Modus</strong>
-          <small>Aufgedeckte Hinweise müssen in den nächsten Versuchen verwendet werden. Gilt für dieses Profil.</small>
+          <small>Aufgedeckte Hinweise müssen in den nächsten Versuchen verwendet werden. Gilt für Tagesrätsel und Endlos in diesem Profil.</small>
         </span>
         <input id="hard-mode" type="checkbox" role="switch">
       </label>

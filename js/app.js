@@ -48,7 +48,7 @@ const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').mat
 const FLIP_STEP = REDUCED_MOTION ? 0 : 300;
 const FLIP_HALF = REDUCED_MOTION ? 0 : 250;
 const PRAISE = ['Genial!', 'Großartig!', 'Beeindruckend!', 'Super!', 'Gut gemacht!', 'Geschafft!', 'Stark!'];
-const AVATAR_COLORS = ['#538d4e', '#b59f3b', '#3d7cc9', '#c0392b', '#8e6bbf', '#d9822b', '#16a085', '#c2457a'];
+const AVATAR_COLOR_COUNT = 6;
 const KEY_ROWS = [
   ['Q', 'W', 'E', 'R', 'T', 'Z', 'U', 'I', 'O', 'P', 'Ü'],
   ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'Ö', 'Ä'],
@@ -152,15 +152,18 @@ function announce(message) {
   });
 }
 
-function avatarColor(name) {
+function nameHash(name) {
   let hash = 0;
   for (const ch of name) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
-  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+  return hash;
 }
 
+// Jeder Name bekommt eine feste Farbe aus der Palette und eine leichte, verspielte Drehung.
 function fillAvatar(el, name) {
+  const hash = nameHash(name);
   el.textContent = letters(name)[0] || '?';
-  el.style.setProperty('--avatar', avatarColor(name));
+  el.style.setProperty('--avatar', `var(--avatar-${(hash % AVATAR_COLOR_COUNT) + 1})`);
+  el.style.setProperty('--r', `${(hash % 11) - 5}deg`);
 }
 
 function openDialog(dialog) {
@@ -181,10 +184,10 @@ function profileSummary(profile) {
   const { daily, stats } = profile.data;
   const parts = [];
   const streak = currentDailyStreak(stats.daily, state.today);
-  if (streak > 0) parts.push(`🔥 ${streak}`);
-  if (daily?.day === state.today && daily.status === 'won') parts.push(`Heute ✓ ${daily.guesses.length}/6`);
-  else if (daily?.day === state.today && daily.status === 'lost') parts.push('Heute ✗');
-  else parts.push('Heute offen');
+  if (streak > 0) parts.push({ text: `🔥 ${streak}`, kind: 'streak' });
+  if (daily?.day === state.today && daily.status === 'won') parts.push({ text: `Heute ✓ ${daily.guesses.length}/6`, kind: 'win' });
+  else if (daily?.day === state.today && daily.status === 'lost') parts.push({ text: 'Heute ✗', kind: 'open' });
+  else parts.push({ text: 'Heute offen', kind: 'open' });
   return parts;
 }
 
@@ -202,8 +205,14 @@ function renderProfiles() {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'profile-card';
-      if (profile.id === lastId) button.classList.add('is-last');
       button.dataset.id = profile.id;
+      if (profile.id === lastId) {
+        button.classList.add('is-last');
+        const badge = document.createElement('span');
+        badge.className = 'badge-last';
+        badge.textContent = 'Zuletzt gespielt';
+        button.append(badge);
+      }
 
       const avatar = document.createElement('span');
       avatar.className = 'avatar';
@@ -218,7 +227,8 @@ function renderProfiles() {
       meta.className = 'profile-card-meta';
       for (const part of profileSummary(profile)) {
         const item = document.createElement('span');
-        item.textContent = part;
+        item.className = `pill pill-${part.kind}`;
+        item.textContent = part.text;
         meta.append(item);
       }
 
@@ -332,6 +342,7 @@ function showProfileScreen() {
   state.current = [];
   els.gameScreen.hidden = true;
   els.profileScreen.hidden = false;
+  document.body.classList.remove('is-playing');
   document.title = 'Wordle Deutsch';
   if (state.profiles.length > 0) {
     setProfileStatus('');
@@ -370,6 +381,7 @@ async function selectProfile(id) {
   const dailyDone = profile.data.daily.status !== 'playing';
   els.profileScreen.hidden = true;
   els.gameScreen.hidden = false;
+  document.body.classList.add('is-playing');
   fillAvatar(els.switchProfile.querySelector('.avatar'), profile.name);
   els.switchProfile.querySelector('.profile-chip-name').textContent = profile.name;
   els.switchProfile.setAttribute('aria-label', `${profile.name} – Profil wechseln`);
@@ -959,7 +971,7 @@ function updateCountdown() {
   const total = secondsUntilBerlinMidnight();
   const pad = (n) => String(n).padStart(2, '0');
   const text = `${pad(Math.floor(total / 3600))}:${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`;
-  $('countdown').textContent = `Nächstes Tagesrätsel in ${text}`;
+  $('countdown').replaceChildren('Neues Tagesrätsel in ', Object.assign(document.createElement('strong'), { textContent: text }));
   checkNewDay();
 }
 
@@ -979,7 +991,7 @@ function showStats({ fromGameEnd = false } = {}) {
   const finished = game.status !== 'playing';
   state.statsView = finished ? { game, mode, variant } : null;
 
-  $('stats-mode').textContent = `· ${modeLabel(mode, variant)}`;
+  $('stats-mode').textContent = modeLabel(mode, variant);
   $('stat-played').textContent = stats.played;
   $('stat-winrate').textContent = stats.played ? Math.round((stats.won / stats.played) * 100) : 0;
   $('stat-streak').textContent = mode === 'daily' ? currentDailyStreak(stats, state.today) : stats.streak;
@@ -1002,17 +1014,30 @@ function showStats({ fromGameEnd = false } = {}) {
   );
 
   $('result-section').hidden = !finished;
+  $('countdown').hidden = !(finished && mode === 'daily');
   stopCountdown();
   if (finished) {
-    $('result-title').textContent = game.status === 'won' ? 'Gewonnen!' : 'Leider verloren';
+    const won = game.status === 'won';
+    // Das Lösungswort als kleine, schiefe Kacheln: grün bei Sieg, grau bei Niederlage.
+    $('result-tiles').replaceChildren(
+      ...letters(game.answer).map((ch, i) => {
+        const tile = document.createElement('span');
+        tile.className = 'tile';
+        tile.dataset.state = won ? 'correct' : 'absent';
+        tile.textContent = ch;
+        tile.style.setProperty('--r', `${[-5, 4, -2, 5, -4][i % 5]}deg`);
+        tile.style.setProperty('--y', `${[2, -3, 0, -2, 2][i % 5]}px`);
+        return tile;
+      }),
+    );
+    $('result-title').textContent = won ? 'Gewonnen! 🎉' : 'Leider verloren 😅';
     const word = Object.assign(document.createElement('strong'), { textContent: game.answer });
     if (variant === 'devil' && game.status === 'lost' && game.remainingAtEnd > 1) {
       $('result-word').replaceChildren('Möglich gewesen wäre z. B. ', word, ` (noch ${game.remainingAtEnd} Wörter)`);
     } else {
       $('result-word').replaceChildren('Das Wort war: ', word);
     }
-    $('next-button').textContent = mode === 'daily' ? 'Endlos spielen' : 'Nächstes Wort';
-    $('countdown').hidden = mode !== 'daily';
+    $('next-label').textContent = mode === 'daily' ? 'Endlos spielen' : 'Nächstes Wort';
     if (mode === 'daily') {
       updateCountdown();
       state.countdownTimer = setInterval(updateCountdown, 1000);
@@ -1042,7 +1067,7 @@ function syncThemeColor() {
   const theme = document.documentElement.dataset.theme;
   for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
     const dark = theme === 'dark' || (!theme && meta.media.includes('dark'));
-    meta.content = dark ? '#121213' : '#ffffff';
+    meta.content = dark ? '#2e2030' : '#fff6ea';
   }
 }
 
